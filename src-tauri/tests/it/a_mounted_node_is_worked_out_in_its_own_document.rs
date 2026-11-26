@@ -146,6 +146,24 @@ fn the_contexts_still_come_through_the_host() {
 }
 
 #[test]
+fn two_hosts_that_mount_one_file_under_other_contexts_each_read_their_own() {
+    let _serial = serial();
+    let other = HOST.replace("host blue", "host red");
+    let mut files = host_files();
+    files.push(("other.os", &other));
+    let (_sandbox, documents) = sandbox("two_hosts", &files);
+    let first = documents.open("host.os").expect("open");
+    let second = documents.open("other.os").expect("open");
+    let again = documents.open("host.os").expect("open");
+    for (host, accent) in [(&first, "host blue"), (&second, "host red"), (&again, "host blue")] {
+        assert_eq!(
+            value_at(host, "weight/CAL/History/[mon]/seen"),
+            Some(OverseerValue::String(accent.to_string()))
+        );
+    }
+}
+
+#[test]
 fn a_change_to_the_nested_mounts_file_reaches_the_host() {
     let _serial = serial();
     let (sandbox, documents) = sandbox("stale", &host_files());

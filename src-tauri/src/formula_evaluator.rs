@@ -122,7 +122,7 @@ struct PassRoot {
 /// the mounted node, the file's own mount of the food catalogue - none of them is in the host. So
 /// a formula of anything at or under `at` is worked out in the `Frame` of the file instead, at
 /// the same place there. Only the contexts come from the host, the frame having the host's
-/// copies of them at the mount after its own top.
+/// copies of them at the mount after its own top - see `FrameRoots`.
 struct Boundary {
     /// The host's path to the node: the mount's, and the node's name.
     at: Vec<String>,
@@ -137,16 +137,17 @@ struct Boundary {
     /// The frame, once a formula has asked for it - or `None` within, when there is none. Held
     /// here as well as in `FRAMES`, so it lives as long as the pass that reads it, whatever
     /// `FRAMES` lets go of meanwhile.
-    frame: Option<Option<std::sync::Arc<Vec<OverseerNode>>>>,
+    frame: Option<Option<std::sync::Arc<FrameRoots>>>,
 }
 
 /// A mounted file's document as worked out on its own, and after its top the contexts its host
-/// has at the mount - what a mounted node's formulas are worked out in. See `Boundary`.
+/// has at the mount - what a mounted node's formulas are worked out in. See `Boundary`, and
+/// `FrameRoots` for how it holds them.
 struct Frame {
     file: String,
     stamp: String,
     copies: Vec<OverseerNode>,
-    roots: std::sync::Arc<Vec<OverseerNode>>,
+    roots: std::sync::Arc<FrameRoots>,
     /// About how many bytes it holds, for the server's memory report: worked out when the report
     /// first asks rather than as the frame is made, which is in the middle of a pass.
     bytes: std::sync::OnceLock<usize>,
@@ -155,11 +156,40 @@ struct Frame {
 /// Every frame made, kept while the reading of the mounted file it was made from is held - see
 /// `FormulaEvaluator::frame`.
 ///
-/// One for the whole process. Each thread kept its own, until its file changed: a frame is a copy
-/// of the whole mounted document, so every thread of the server's pool that had worked out a host
+/// One for the whole process. Each thread kept its own, until its file changed: a frame was a copy
+/// of the whole mounted document then, so every thread of the server's pool that had worked out a host
 /// went on holding its copies of what the host mounted - 112 MB a thread for the body weight
 /// tracker, which mounts the food tracker's days - named by no figure of the memory line.
 static FRAMES: std::sync::Mutex<Vec<Frame>> = std::sync::Mutex::new(Vec::new());
+
+/// What a frame's formulas are worked out in: the mounted file's top, and beside it the host's
+/// copies of the contexts it has at the mount, looked through after the top - see
+/// `FormulaEvaluator::copies_beside`.
+///
+/// The top is the very reading the mounted files' cache holds, shared rather than copied: a copy
+/// of the whole mounted document for the sake of a few contexts after its top held the body
+/// weight tracker's food days twice, 65 MB more. Only when another frame already shares the same
+/// reading with other copies is the top a copy of it, with the copies after it and none beside:
+/// a frame's copies are found by the top they stand beside, which must say which they are.
+struct FrameRoots {
+    top: std::sync::Arc<Vec<OverseerNode>>,
+    copies: Vec<OverseerNode>,
+    /// Whether the top is the cache's reading rather than a copy of it.
+    shares: bool,
+}
+
+/// Every frame sharing a reading of the mounted files' cache, while anything holds it - so that no
+/// two of them with other copies share one, and `copies_beside` cannot take one's for the other's.
+static SHARING: std::sync::Mutex<Vec<std::sync::Weak<FrameRoots>>> = std::sync::Mutex::new(Vec::new());
+
+thread_local! {
+    /// The frames that share a reading, which this thread's pass has handed out - where
+    /// `copies_beside` finds the copies beside a top. Let go of with the pass root, which holds
+    /// the same frames in its boundaries.
+    static SHARED_IN_PASS: RefCell<Vec<std::sync::Arc<FrameRoots>>> = const { RefCell::new(Vec::new()) };
+    /// Whether `SHARED_IN_PASS` holds any, asked first: most passes hand out no frame at all.
+    static ANY_SHARED_IN_PASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 // Several threads' passes read the same frame at once, through references the lock does not
 // cover - which is sound only while a node has no interior mutability.
@@ -444,7 +474,7 @@ impl FormulaEvaluator {
                         let mut skip_first = false;
                         if !found {
                             if let Some(root_match) =
-                                ctx.document_root.iter().find(|n| &n.name == &segments[0])
+                                FormulaEvaluator::top_level(ctx.document_root).find(|n| &n.name == &segments[0])
                             {
                                 start = root_match;
                                 p = vec![segments[0].clone()];
@@ -957,6 +987,7 @@ impl FormulaEvaluator {
     /// be one into what the pass writes between the nodes it works out.
     pub fn begin_pass_over(root: *const [OverseerNode]) {
         Self::begin_pass_memo();
+        Self::forget_pass_root();
         Self::with_pass_root(|slot| {
             *slot = Some(PassRoot {
                 root: root as *const OverseerNode,
@@ -983,7 +1014,7 @@ impl FormulaEvaluator {
         struct LetGo;
         impl Drop for LetGo {
             fn drop(&mut self) {
-                FormulaEvaluator::with_pass_root(|slot| *slot = None);
+                FormulaEvaluator::forget_pass_root();
             }
         }
         let set = Self::with_pass_root_if_free(|slot| {
@@ -1021,14 +1052,27 @@ impl FormulaEvaluator {
                 .iter_mut()
                 .filter(|b| path.len() >= b.at.len() && path[..b.at.len()] == b.at[..])
                 .max_by_key(|b| b.at.len())?;
+            let made = boundary.frame.is_none();
             let frame = boundary
                 .frame
                 .get_or_insert_with(|| Self::frame(&boundary.file, &boundary.stamp, boundary.copies.clone()))
                 .as_ref()?;
-            // SAFETY: the frame is held by the boundary, which the pass root holds, and the pass
-            // root is only let go of as a pass ends or the next begins - when no context made
-            // while it was set is left.
-            let frame: &'static [OverseerNode] = unsafe { std::slice::from_raw_parts(frame.as_ptr(), frame.len()) };
+            // Once a pass for each boundary, the boundaries being the pass root's: a context is
+            // made here for every node worked out, and most are made in a frame already known.
+            if made && frame.shares {
+                SHARED_IN_PASS.with(|held| {
+                    let mut held = held.borrow_mut();
+                    if !held.iter().any(|f| std::sync::Arc::ptr_eq(f, frame)) {
+                        held.push(frame.clone());
+                    }
+                });
+                ANY_SHARED_IN_PASS.set(true);
+            }
+            // SAFETY: the frame is held by the boundary, which the pass root holds, and holds the
+            // reading its top is - which the mounted files' cache may let go of meanwhile, but not
+            // free. The pass root is only let go of as a pass ends or the next begins - when no
+            // context made while it was set is left.
+            let frame: &'static [OverseerNode] = unsafe { std::slice::from_raw_parts(frame.top.as_ptr(), frame.top.len()) };
             let mut own = boundary.source.clone();
             own.extend_from_slice(&path[boundary.at.len()..]);
             Some((frame, own))
@@ -1179,7 +1223,7 @@ impl FormulaEvaluator {
     /// the first time any thread asks for it, and kept. `None` when the file is no longer held as
     /// it was read, as when it changed since: the formula is worked out in the host then, as it
     /// always was, and the next reading of the host reads the file again.
-    fn frame(file: &str, stamp: &str, copies: Vec<OverseerNode>) -> Option<std::sync::Arc<Vec<OverseerNode>>> {
+    fn frame(file: &str, stamp: &str, copies: Vec<OverseerNode>) -> Option<std::sync::Arc<FrameRoots>> {
         let found = |frames: &[Frame]| {
             frames
                 .iter()
@@ -1189,17 +1233,41 @@ impl FormulaEvaluator {
         if let Some(roots) = found(&FRAMES.lock().unwrap_or_else(|e| e.into_inner())) {
             return Some(roots);
         }
+        // Read before the lock is taken, so the mounted files' lock is never taken inside it.
         let (reading, own) = crate::actions::ActionExecutor::mounted_reading(file)?;
         // Made from the reading the mount was made from, or not at all.
         if stamp.rsplit('|').next() != Some(reading.to_string().as_str()) {
             return None;
         }
+        let own = {
+            let mut frames = FRAMES.lock().unwrap_or_else(|e| e.into_inner());
+            // Another thread may have made the same one meanwhile.
+            if let Some(roots) = found(&frames) {
+                return Some(roots);
+            }
+            // Shared, unless a frame with other copies already shares it. Decided under the lock,
+            // so two threads cannot both decide to share it.
+            let mut sharing = SHARING.lock().unwrap_or_else(|e| e.into_inner());
+            sharing.retain(|f| f.strong_count() > 0);
+            let taken = sharing
+                .iter()
+                .filter_map(std::sync::Weak::upgrade)
+                .any(|f| std::sync::Arc::ptr_eq(&f.top, &own));
+            if !taken {
+                let roots = std::sync::Arc::new(FrameRoots { top: own, copies: copies.clone(), shares: true });
+                sharing.push(std::sync::Arc::downgrade(&roots));
+                drop(sharing);
+                frames.push(Frame { file: file.to_string(), stamp: stamp.to_string(), copies, roots: roots.clone(), bytes: Default::default() });
+                return Some(roots);
+            }
+            own
+        };
         // Made outside the lock: copying a large mounted document takes a while, and other
         // threads' passes look for their frames meanwhile.
-        let mut roots = own.as_ref().clone();
+        let mut top = own.as_ref().clone();
         // After the file's own top, so a context it declares there is found first.
-        roots.extend(copies.iter().cloned());
-        let roots = std::sync::Arc::new(roots);
+        top.extend(copies.iter().cloned());
+        let roots = std::sync::Arc::new(FrameRoots { top: std::sync::Arc::new(top), copies: Vec::new(), shares: false });
         let mut frames = FRAMES.lock().unwrap_or_else(|e| e.into_inner());
         // Another thread may have made the same one meanwhile, and one copy is enough.
         if let Some(theirs) = found(&frames) {
@@ -1207,6 +1275,40 @@ impl FormulaEvaluator {
         }
         frames.push(Frame { file: file.to_string(), stamp: stamp.to_string(), copies, roots: roots.clone(), bytes: Default::default() });
         Some(roots)
+    }
+
+    /// The host's copies of the contexts beside the top of a frame this thread's pass has handed
+    /// out - see `FrameRoots` - and none for any other document, whose copies are in it.
+    fn copies_beside(root: &[OverseerNode]) -> &[OverseerNode] {
+        if !ANY_SHARED_IN_PASS.get() {
+            return &[];
+        }
+        SHARED_IN_PASS
+            .with(|held| {
+                let held = held.try_borrow().ok()?;
+                let frame = held.iter().find(|f| f.top.as_ptr() == root.as_ptr() && f.top.len() == root.len())?;
+                // SAFETY: the frame is held here until the pass root is let go of, when no context
+                // made from it is left - see `in_its_own_document` - and its copies are never
+                // changed. A top no frame here shares is a copy, or not a frame at all.
+                Some(unsafe { std::slice::from_raw_parts(frame.copies.as_ptr(), frame.copies.len()) })
+            })
+            .unwrap_or(&[])
+    }
+
+    /// A document's top-level nodes, and for a frame the copies beside them - what was one slice
+    /// while a frame was a copy of its mounted document with the copies after its top.
+    ///
+    /// The copies are only looked for once the top is passed: a bare name is looked for at the
+    /// top many times over in every formula of a large frame.
+    fn top_level(root: &[OverseerNode]) -> impl Iterator<Item = &OverseerNode> {
+        root.iter().chain(std::iter::once(root).flat_map(|root| Self::copies_beside(root).iter()))
+    }
+
+    /// Let go of the pass root, and of the frames it handed out.
+    fn forget_pass_root() {
+        Self::with_pass_root(|slot| *slot = None);
+        SHARED_IN_PASS.with(|held| held.borrow_mut().clear());
+        ANY_SHARED_IN_PASS.set(false);
     }
 
     /// Lets go of the frames nothing will ask for again: those of files that have changed since
@@ -1251,7 +1353,19 @@ impl FormulaEvaluator {
     /// How many frames are held, and about how many bytes - for the server's memory report.
     pub fn frames_held() -> (usize, usize) {
         let frames = FRAMES.lock().unwrap_or_else(|e| e.into_inner());
-        (frames.len(), frames.iter().map(|f| *f.bytes.get_or_init(|| crate::document_cache::footprint(&f.roots))).sum())
+        // A frame that shares its top holds only the copies beside it: the top is counted with the
+        // mounted files.
+        (
+            frames.len(),
+            frames
+                .iter()
+                .map(|f| {
+                    *f.bytes.get_or_init(|| {
+                        crate::document_cache::footprint(if f.roots.shares { &f.roots.copies } else { &f.roots.top })
+                    })
+                })
+                .sum(),
+        )
     }
 
     /// Where a node of the pass's document is, named as the resolver names it.
@@ -1431,7 +1545,7 @@ impl FormulaEvaluator {
     pub fn end_pass_memo() {
         Self::with_memo(|slot| *slot = None);
         Self::with_index_cache(|slot| *slot = None);
-        Self::with_pass_root(|slot| *slot = None);
+        Self::forget_pass_root();
     }
 
     /// The indexes built during this pass, by the list they describe and the field they key on.
@@ -2077,7 +2191,7 @@ impl FormulaEvaluator {
             if !found {
                 // Fallback: treat as absolute root path if a top-level node matches first segment
                 if let Some(root_match) =
-                    context.document_root.iter().find(|n| &n.name == first_seg)
+                    FormulaEvaluator::top_level(context.document_root).find(|n| &n.name == first_seg)
                 {
                     found_start = root_match;
                     base_path = vec![first_seg.clone()];
@@ -2325,7 +2439,7 @@ impl FormulaEvaluator {
             }
             // Extra root-level fallback: if first segment matches a top-level node, start from there
             if let Some(first) = path.first() {
-                if let Some(mut node) = context.document_root.iter().find(|n| &n.name == first) {
+                if let Some(mut node) = FormulaEvaluator::top_level(context.document_root).find(|n| &n.name == first) {
                     if path.len() == 1 {
                         return FormulaEvaluator::get_effective_value_for_node(
                             node,
@@ -2568,7 +2682,7 @@ impl FormulaEvaluator {
             }
             let mut skip_first = false;
             if !found {
-                if let Some(root_match) = context.document_root.iter().find(|n| &n.name == first) {
+                if let Some(root_match) = FormulaEvaluator::top_level(context.document_root).find(|n| &n.name == first) {
                     start = root_match;
                     p = vec![first.clone()];
                     skip_first = true;
@@ -3797,7 +3911,8 @@ impl FormulaEvaluator {
         let mut current = if segments[0] == PRESSED_ENTRY {
             Self::the_pressed_entry()?
         } else {
-            crate::addressing::step_among(root, &segments[0])?
+            crate::addressing::step_among(root, &segments[0])
+                .or_else(|| crate::addressing::step_among(Self::copies_beside(root), &segments[0]))?
         };
         for seg in &segments[1..] {
             current = crate::addressing::step_among(&current.children, seg)?;
@@ -3878,8 +3993,7 @@ impl FormulaEvaluator {
     /// The first node anywhere in the document with this name. A context counts only at the top,
     /// where it is the document's own and every reader is inside it.
     fn find_node_by_name<'a>(roots: &'a [OverseerNode], name: &str) -> Option<&'a OverseerNode> {
-        if let Some(copy) = roots
-            .iter()
+        if let Some(copy) = Self::top_level(roots)
             .find(|n| crate::contexts::is_copy(n) && n.name == name)
         {
             return Some(copy);
@@ -5534,7 +5648,7 @@ impl FormulaEvaluator {
                         if parent_end == 0 {
                             // At top-level: search among document root nodes (siblings of current)
                             if let Some(found) =
-                                context.document_root.iter().find(|n| &n.name == name)
+                                FormulaEvaluator::top_level(context.document_root).find(|n| &n.name == name)
                             {
                                 return Some((vec![found.name.clone()], found));
                             }
@@ -5841,7 +5955,7 @@ impl FormulaEvaluator {
             let mut skip_first = false;
             if !found {
                 if let Some(root_match) =
-                    context.document_root.iter().find(|n| n.name == segments[0])
+                    FormulaEvaluator::top_level(context.document_root).find(|n| n.name == segments[0])
                 {
                     start = root_match;
                     walked = vec![segments[0].clone()];
@@ -5934,8 +6048,7 @@ impl FormulaEvaluator {
         // before anything else so named, as `find_node_by_name` has it, and never a declaration,
         // which is worked out only in its copies.
         let (first, rest) = path.split_first()?;
-        let top = root
-            .iter()
+        let top = Self::top_level(root)
             .find(|n| crate::contexts::is_copy(n) && &n.name == first)
             .or_else(|| {
                 root.iter()

@@ -1,7 +1,8 @@
-//! The frame a mounted node's formulas are worked out in is a copy of the whole mounted document,
-//! and it is held once for the server, not once for every thread that worked a host out - see
-//! `formula_evaluator`'s `FRAMES`. The server's pool keeps its threads between requests, and each
-//! used to keep its own copies for as long as it lived, named by no figure of the memory line.
+//! The frame a mounted node's formulas are worked out in is held once for the server, not once
+//! for every thread that worked a host out - see `formula_evaluator`'s `FRAMES`. The server's pool
+//! keeps its threads between requests, and each used to keep its own copies for as long as it
+//! lived, named by no figure of the memory line. And it shares the mounted document the mount
+//! holds rather than copying it: all it holds of its own is the host's contexts beside it.
 
 use overseer::heap::{self, Counting};
 use overseer::server::DocumentRoot;
@@ -48,7 +49,7 @@ fn held() -> usize {
 }
 
 #[test]
-fn threads_that_worked_out_a_host_share_one_frame_of_its_mount_and_let_go_of_it_with_the_mount() {
+fn threads_that_worked_out_a_host_share_one_frame_of_its_mount_which_borrows_the_mount_and_goes_with_it() {
     let root = std::env::temp_dir().join(format!("overseer_frame_once_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
@@ -88,7 +89,9 @@ fn threads_that_worked_out_a_host_share_one_frame_of_its_mount_and_let_go_of_it_
 
     let (frames, bytes) = FormulaEvaluator::frames_held();
     assert_eq!(frames, 1, "one frame for the mount, whichever thread asked for it");
-    assert!(bytes > MB, "the frame is a copy of the mounted list: {} bytes", bytes);
+    let mounted = overseer::actions::mounted_held().1;
+    assert!(mounted > MB, "the mounted list weighs something: {} bytes", mounted);
+    assert!(bytes < mounted / 100, "the frame holds {} bytes beside a mount of {}", bytes, mounted);
 
     overseer::document_cache::let_go_idle_everywhere(Duration::ZERO);
     assert_eq!(FormulaEvaluator::frames_held(), (0, 0), "the frame goes with the mount it was made from");
@@ -97,10 +100,10 @@ fn threads_that_worked_out_a_host_share_one_frame_of_its_mount_and_let_go_of_it_
     overseer::source_registry::SourceRegistry::forget_all_unused();
     let left = held().saturating_sub(start);
     assert!(
-        left < bytes / 4,
-        "with both threads still up, {} MB is held against a frame of {} MB",
+        left < mounted / 4,
+        "with both threads still up, {} MB is held against a mount of {} MB",
         left / MB,
-        bytes / MB
+        mounted / MB
     );
 
     drop(done_tx);
