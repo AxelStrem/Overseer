@@ -458,6 +458,10 @@ fn let_go(file: &std::fs::File) {
 
 /// Bring the folder back within budget, the files written longest ago going first.
 pub(crate) fn trim(folder: &Path, budget: usize) {
+    // Every writer trims after it writes, each on a thread of its own. Two trims listing the
+    // folder at once would each remove a file for the same excess, and together leave it empty.
+    static TRIMMING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _trimming = TRIMMING.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(listing) = std::fs::read_dir(folder) else { return };
     let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = listing
         .filter_map(|e| e.ok())
@@ -467,14 +471,26 @@ pub(crate) fn trim(folder: &Path, budget: usize) {
             Some((about.modified().ok()?, about.len(), e.path()))
         })
         .collect();
+    let_go_of_oldest(files, budget, |path| std::fs::remove_file(path));
+}
+
+/// Remove the files written longest ago until the rest are within the budget.
+fn let_go_of_oldest(
+    mut files: Vec<(std::time::SystemTime, u64, PathBuf)>,
+    budget: usize,
+    mut remove: impl FnMut(&Path) -> std::io::Result<()>,
+) {
     files.sort_unstable();
     let mut total: u64 = files.iter().map(|(_, len, _)| len).sum();
     for (_, len, path) in files {
         if total <= budget as u64 {
             break;
         }
-        if std::fs::remove_file(&path).is_ok() {
-            total -= len;
+        // A file someone else removed since the listing is gone all the same; one that will not
+        // go - open elsewhere, on Windows - is passed over for the next.
+        match remove(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {}
+            _ => total -= len,
         }
     }
 }
@@ -510,6 +526,49 @@ pub fn settled() {
     let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     while *writing > 0 {
         writing = WRITTEN.wait(writing).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
+#[cfg(test)]
+mod trims {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn a_file_another_trim_removed_first_counts_as_gone() {
+        let at = SystemTime::UNIX_EPOCH;
+        let files = vec![
+            (at, 100, PathBuf::from("old.json")),
+            (at + Duration::from_secs(1), 100, PathBuf::from("new.json")),
+        ];
+        let mut removed = Vec::new();
+        let_go_of_oldest(files, 150, |path| {
+            if path == Path::new("old.json") {
+                return Err(std::io::ErrorKind::NotFound.into());
+            }
+            removed.push(path.to_path_buf());
+            Ok(())
+        });
+        assert!(removed.is_empty(), "removed {:?} as well", removed);
+    }
+
+    #[test]
+    fn a_file_that_will_not_go_is_passed_over_for_the_next() {
+        let at = SystemTime::UNIX_EPOCH;
+        let files = vec![
+            (at, 100, PathBuf::from("old.json")),
+            (at + Duration::from_secs(1), 100, PathBuf::from("newer.json")),
+            (at + Duration::from_secs(2), 100, PathBuf::from("newest.json")),
+        ];
+        let mut removed = Vec::new();
+        let_go_of_oldest(files, 200, |path| {
+            if path == Path::new("old.json") {
+                return Err(std::io::ErrorKind::PermissionDenied.into());
+            }
+            removed.push(path.to_path_buf());
+            Ok(())
+        });
+        assert_eq!(removed, vec![PathBuf::from("newer.json")]);
     }
 }
 
