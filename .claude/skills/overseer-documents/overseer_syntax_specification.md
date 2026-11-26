@@ -2541,6 +2541,13 @@ else the nearest `context vocabulary` that does. A container that says only
 `context vocabulary = "@/guests/People"` changes who `<@...>` names inside it and leaves `<#...>` as
 it was above. A field picks from its unmarked lists; the other marks are for text.
 
+A mark typed in the text editor followed by a letter or more - `#pa` - opens a drop-down of the
+entries whose key begins with what follows it, then those whose key, `name` or `title` holds it,
+and picking one writes the chip in its place. It offers the entries of every list the mark's
+vocabulary names, the first list's before the rest, so a project's text can mention a closed item
+as readily as an open one. That includes the entries of the parts a list has not read, whose chips
+the server summarises (see "Keeping a list in parts"), so the whole history is offered without being read.
+
 A `context vocabulary` can also be a block whose elements each name lists, marks and all. It merges
 as any context does (see "Contexts"), so each layer of a document - a template, an instance made
 from it, a mounted document, a container inside - adds its own element with `+` or replaces one by
@@ -2740,7 +2747,8 @@ no name is drawn by its key as it stands, `__init__` and all:
 
 Several lists can be named, separated by commas: the picker offers
 the first, never the entry the field is part of, and the rest only name and colour what is
-already held. A task naming the tasks it waits on, open or finished, each in its own colour:
+already held. A mark typed in text offers all of them (see "Chips in text"). A task naming the
+tasks it waits on, open or finished, each in its own colour:
 
 ```overseer
 tags after (vocabulary="/project/Items, /project/History") = "parser, escape"

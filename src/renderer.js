@@ -1014,13 +1014,14 @@ export const chipMarkAtCaret = (text, caret) => {
 
 /// The keys of a vocabulary that answer what was typed after a mark, best first: keys that begin
 /// with it, then keys, names and hover texts that hold it anywhere - each group in the
-/// vocabulary's own order, and only entries it offers.
-export const vocabularyMatches = (vocabulary, query, limit = 20) => {
+/// vocabulary's own order, and only entries it offers - or, with `every`, the entries of all its
+/// lists, as a mention in text may name anything the document knows.
+export const vocabularyMatches = (vocabulary, query, limit = 20, every = false) => {
     const q = String(query ?? '').toLowerCase()
     const first = []
     const then = []
     for (const [key, known] of vocabulary || []) {
-        if (known && known.offered === false) continue
+        if (!every && known && known.offered === false) continue
         const k = String(key).toLowerCase()
         if (k.startsWith(q)) first.push(key)
         else if (k.includes(q)
@@ -14201,7 +14202,9 @@ export class OverseerRenderer {
             const found = chipMarkAtCaret(textarea.value, textarea.selectionStart)
             if (!found || textarea.selectionStart !== textarea.selectionEnd || !this.vocabularyFor(node, found.mark)) return close()
             const vocabulary = this.tagVocabulary(node, found.mark)
-            const matching = vocabularyMatches(vocabulary, found.query)
+            // Every list the vocabulary names, not only the first a field's picker offers: a
+            // mention can name a closed item as well as an open one. The first list's come first.
+            const matching = vocabularyMatches(vocabulary, found.query, 20, true)
             if (matching.length === 0) return close()
             typed = found
             keys = matching

@@ -155,6 +155,57 @@ describe('typing a chip mark in the text editor', () => {
   })
 })
 
+describe('a chip mark typed in text, over a vocabulary of several lists', () => {
+  // As a project tracker names its items: the open ones first, then the closed ones, whose list
+  // keeps its older parts unread and gives their chips as the server summarised them.
+  const aTracker = () => {
+    const history = keyed('History', 'handle', [item('markup', 'Markup closed this week')])
+    history.parameters._parts_vocabulary = {
+      String: JSON.stringify([{ key: 'mark-old', title: 'Closed long ago' }]),
+    }
+    const tags = Object.assign(base('after', 'tags'), {
+      parameters: { value: { String: '' }, vocabulary: { String: '/p/Items, /p/History' } },
+    })
+    return [Object.assign(base('p', 'tab'), {
+      parameters: { mutable: { Boolean: true } },
+      children: [
+        aVocabulary('/p/Items, /p/History'),
+        keyed('Items', 'handle', [item('markdown-editor', 'Markdown Editor for text nodes')]),
+        history,
+        valued('note', 'text', '', { markdown: { Boolean: true } }),
+        tags,
+      ],
+    })]
+  }
+
+  let app
+  beforeEach(() => {
+    setupDOM()
+    app = new OverseerApp()
+    window.app = app
+    app.currentDocument = aTracker()
+    app._currentText = 'TEXT'
+    app.renderer.renderDocument(app.currentDocument)
+  })
+
+  it('offers the entries of every list, the first list first, unread parts included', () => {
+    document.querySelector('.text-content').dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }))
+    const textarea = document.querySelector('textarea.markdown-editor')
+    textarea.value = 'see #ma'
+    textarea.setSelectionRange(7, 7)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    const offered = Array.from(document.querySelectorAll('.mark-complete .mark-option')).map(o => o.dataset.key)
+    expect(offered).toEqual(['markdown-editor', 'markup', 'mark-old'])
+  })
+
+  it('leaves a field picking from the same lists offering the first alone', () => {
+    const field = app.currentDocument[0].children[4]
+    const vocabulary = app.renderer.tagVocabulary(field)
+    expect(vocabularyMatches(vocabulary, 'ma')).toEqual(['markdown-editor'])
+    expect(vocabularyMatches(vocabulary, 'ma', 20, true)).toEqual(['markdown-editor', 'markup', 'mark-old'])
+  })
+})
+
 describe('the mark at the caret', () => {
   it('is the whole word the caret is in', () => {
     expect(chipMarkAtCaret('a #mark-x b', 5)).toEqual({ mark: '#', query: 'ma', start: 2, end: 9 })
