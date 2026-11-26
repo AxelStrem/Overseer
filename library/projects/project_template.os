@@ -489,6 +489,12 @@ tab project (label=$(name), mutable=true) {
                 $(../Talk/Comments.filter(|c| c/at > ../closed_at).count() == 0 ? ../closed_at :
                   ../Talk/Comments.map(|c| c/at).max())
             string last_author (hidden=true) = $(../Talk/Comments.reduce("", |a, c| c/author))
+
+            on dblclick {
+                call (name="copy") {
+                    - link = $("project/Items/[" + handle + "]")
+                }
+            }
         }
 
         div Topic (layout="horizontal", margin=0, margin-bottom=3px, spacing=6, padding=2, alignment="center",
@@ -550,6 +556,12 @@ tab project (label=$(name), mutable=true) {
 
             timestamp said_at (hidden=true) =
                 $(../Talk/Comments.count() == 0 ? ../added : ../Talk/Comments.map(|c| c/at).max())
+
+            on dblclick {
+                call (name="copy") {
+                    - link = $("project/Discussion/[" + handle + "]")
+                }
+            }
         }
 
         div Finished (layout="vertical", margin=0, spacing=2) {
@@ -608,6 +620,12 @@ tab project (label=$(name), mutable=true) {
             string colour (hidden=true) =
                 $(/project/Statuses.filter(|s| s/tag == ../status).map(|s| s/colour).first())
             string shape (hidden=true) = "ticket"
+
+            on dblclick {
+                call (name="copy") {
+                    - link = $("project/History/[" + handle + "]")
+                }
+            }
         }
 
         list Standings (entry=<Label>, key="tag") {

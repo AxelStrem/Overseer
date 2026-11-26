@@ -1679,6 +1679,8 @@ date finished = ""
 
 - `click` - a button pressed, or a div that carries it pressed anywhere (see "A whole entry as the
   thing you press").
+- `hold` - a press held down on a button or a div (see "A tap or a hold").
+- `dblclick` - a button or a div double-clicked, or double-tapped on a phone (see "A double click").
 - `change` - a field's value changed by hand: typed, picked from a chip, or ticked. The new value is written
   first, and the handler and the value are one change, so the handler reads what was just chosen
   and one undo takes back both.
@@ -2128,6 +2130,29 @@ the press is let go, moves off or becomes the hold.
 `press` runs another node's `on click`, never its `on hold`. On an entry of a movable list, a
 long press that begins dragging the entry is a drag, and not a hold.
 
+#### A double click
+
+`on dblclick` on a button or a div runs on a double click, or a double tap on a phone, anywhere on
+it that a tap would reach (see "A whole entry as the thing you press"): a field that can be edited
+there keeps its own double tap, which edits it, and a worked-out value passes it on. The clicks
+that make up a double click are clicks as ever, so a node with both `on click` and `on dblclick`
+runs its click on each of them and then the double click. A div that only says `on dblclick` is
+not drawn as something to press, since a single tap on it does nothing. A double click is run as a
+click is: from the node's own place, as one change and one step to take back. A project tracker's
+rows say it, to copy a link to the row:
+
+```overseer
+div Item {
+    string handle = ""
+
+    on dblclick {
+        call (name="copy") {
+            - link = $("project/Items/[" + handle + "]")
+        }
+    }
+}
+```
+
 #### Opening a field for editing
 
 `start_editing` opens a field as though it had been double-tapped, with the cursor in it:
@@ -2295,7 +2320,7 @@ What an operation answers - a sentence, a key, a link - is written into the `int
 typed there, and so is the sentence a refused operation answers with. The field has to be
 guarded, here or above (see "Who may change what"): what an operation answers belongs to whoever asked,
 never to the document, and a call into any other field refuses the press. A refused operation with
-no `into` is said on the status line. A refused operation never stops the calls after it.
+no `into` is said on the status line. So is what `copy` answers, which nothing else would show. A refused operation never stops the calls after it.
 
 The host checks each request as it would one made by hand - the current password, whether the
 person is an admin - so a document can ask for nothing its viewer could not already do. A name
@@ -2316,7 +2341,7 @@ the desktop, a file from the disk in a browser - answers that it is not availabl
 | `sharing` | none: the person's sharing document is opened, made the first time | | browser |
 | `sharing_reach` | | what each entry of the person's sharing document comes to, a line each: the documents it covers and who it is with | browser |
 | `sign_out` | | | browser |
-| `copy` | `text`: put on the clipboard | `Copied.` | both |
+| `copy` | `text`: put on the clipboard; or `link`, an address in the document, as the API writes it - the clipboard gets a link to the document as the page shows it, by its full name, opening at that node (see API.md); an empty one links the document itself. A link is browser only | `Copied.` | both |
 | `fold_drawer` | `folded`, turned over if left out | | both |
 | `describe` | `path`, a document as `open` names it | what it is called, as `host/open/label` says of an open one; nothing for one the viewer may not read, or one with no label | both |
 | `open_file`, `new_file` | | | desktop |
@@ -3455,7 +3480,7 @@ div Tasks {
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`
 - **Enums**: `vocabulary`, `withhold`, `placeholder`, `shape`, `chip`, `clearable`
 - **Tags**: `vocabulary`, `shape`, `chip` (on a `tags` or `enum` field, or a `textbox` that picks rather than takes typing)
-- **Events**: `on click`, `on hold`, `on change`, `on load`, `on unload`
+- **Events**: `on click`, `on hold`, `on dblclick`, `on change`, `on load`, `on unload`, `on tick`
 - **Types** (not to be a template's name): `tab`, `div`, `list`, `grid`, `array`, `calendar`, `list_item`, `string`, `textbox`, `text`, `tags`, `enum`, `int`, `float`, `date`, `timestamp`, `bool`, `button`, `checkbox`, `chart`, `image`, `audio`, `mark`, `mount`, `context`
 - **Contexts**: `context` (in a type's place), `base` (on a context, and `base=none` or `base=<node>` on an element of an override)
 

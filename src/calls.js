@@ -133,8 +133,9 @@ export const OPERATIONS = {
         } catch (_) { /* the sign-in page is where this goes either way */ }
         navigate('/signin')
     }),
-    async copy({ text: what }) {
-        await navigator.clipboard.writeText(text(what))
+    async copy({ text: what, link }, app) {
+        const line = link === undefined || link === null ? text(what) : linkTo(text(link), app)
+        await navigator.clipboard.writeText(line)
         return 'Copied.'
     },
     async fold_drawer({ folded }, app) {
@@ -150,6 +151,22 @@ export const OPERATIONS = {
     },
     open_file: desktop(async (_, app) => { await app.openFile() }),
     new_file: desktop(async (_, app) => { await app.newFile() }),
+}
+
+/// A link to the document being shown, at a node of it when `address` names one: its address as
+/// the API writes it, after `#`, which the page follows to that node. The document is named in
+/// full, as the server named it, so that whoever the link reaches opens the same one. Only the
+/// page knows where it was opened from - the server may sit behind a proxy - and the desktop app
+/// has no address to give.
+export function linkTo(address, app) {
+    if (!inBrowser()) throw new NotHere('link')
+    const account = app && app.account
+    const name = (account && (account.document || account.documentName())) || null
+    if (!name) throw new Error('This document has no link.')
+    const node = String(address || '').replace(/^\/+/, '')
+    // Brackets kept as the API writes them: a link to `[scan]` reads as one.
+    const fragment = encodeURI(node).replace(/#/g, '%23').replace(/%5B/g, '[').replace(/%5D/g, ']')
+    return window.location.origin + docAddress(name) + (node ? '#' + fragment : '')
 }
 
 function inBrowser() {

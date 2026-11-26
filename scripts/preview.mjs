@@ -586,9 +586,13 @@ async function main() {
                 const y = r.pressY
                 const held = () => hold > 0 ? new Promise((done) => setTimeout(done, hold * 1000)) : null
                 if (args.mobile && !right) {
-                    await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
-                    await held()
-                    await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+                    // Two taps close together are a double tap, as a phone tells one.
+                    for (const count of double ? [1, 2] : [1]) {
+                        if (count > 1) await wait(80)
+                        await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+                        await held()
+                        await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+                    }
                 } else {
                     const button = right ? 'right' : 'left'
                     await mouse(x, y, 'mouseMoved', { button: 'none' })

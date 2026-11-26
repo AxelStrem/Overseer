@@ -62,6 +62,7 @@ mod a_document_that_reads_no_one_is_shared_between_people;
 mod a_document_under_a_listed_extension_opens;
 #[cfg(feature = "server")]
 mod a_documents_text_is_read_and_written_as_given;
+mod a_double_click_runs_its_own_actions;
 mod a_field_holds_one_of_a_list;
 mod a_filter_finds_the_same_rows;
 mod a_float_can_be_written_the_usual_ways;

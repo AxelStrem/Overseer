@@ -78,7 +78,7 @@ A path can go on after a method: `Items.find("parser")/points`.
 
 ## Events
 
-`on click` (a button, or a div that carries it), `on hold`, `on change` (a field edited by hand),
+`on click` (a button, or a div that carries it), `on hold`, `on dblclick`, `on change` (a field edited by hand),
 `on load` / `on unload` (a mount, or a named top-level node when the page opens it), `on tick`
 (a named top-level node with `tick=`). `on load` and `on tick` may write only guarded fields.
 

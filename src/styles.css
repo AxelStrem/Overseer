@@ -596,6 +596,11 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     user-select: none;
 }
 
+/* Something that says `on dblclick` is double-tapped on a phone, which would otherwise zoom. */
+[data-double-taps="1"] {
+    touch-action: manipulation;
+}
+
 .overseer-pressable:focus-visible {
     outline: 2px solid var(--ov-accent);
     outline-offset: 2px;

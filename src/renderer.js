@@ -5699,8 +5699,12 @@ export class OverseerRenderer {
             'date', 'timestamp', 'bool', 'button', 'checkbox', 'chart', 'mount'].includes(type)
         if (drawnAsAField) return
         const taps = this.declaresEvent(node, 'click')
-        if (!taps && !this.declaresEvent(node, 'hold')) return
+        const doubles = this.declaresEvent(node, 'dblclick')
+        if (!taps && !doubles && !this.declaresEvent(node, 'hold')) return
         if (node.parameters && node.parameters.link !== undefined) return
+
+        if (doubles) this.listenForDoubleTap(element, node)
+        if (!taps && !this.declaresEvent(node, 'hold')) return
 
         element.classList.add('overseer-pressable')
         element.setAttribute('role', 'button')
@@ -5747,6 +5751,28 @@ export class OverseerRenderer {
         element.addEventListener('pointerleave', () => {
             letGo()
             element.classList.remove('would-press')
+        })
+    }
+
+    /**
+     * A double click - a double tap on a phone - on a node that declares `on dblclick`, wherever
+     * nothing inside it answers for itself: a field that can be edited there keeps its own double
+     * tap, which edits it. The clicks that make it up are clicks as ever, so a node with both
+     * `on click` and `on dblclick` runs its click on each of them first.
+     *
+     * A node that only answers a double tap is not drawn as pressable: a single click on it does
+     * nothing, and a row that lit up under the pointer would say otherwise. It is marked all the
+     * same, so that the worked-out values in it pass their double taps on to it, and so that one
+     * inside another such node takes the double tap itself.
+     */
+    listenForDoubleTap(element, node) {
+        element.dataset.doubleTaps = '1'
+        element.addEventListener('dblclick', (event) => {
+            if (this.whatTakesTheTap(event.target, element, 'dblclick') !== element) return
+            // The browser selects the word under a double click; here it was a gesture, not that.
+            try { window.getSelection()?.removeAllRanges() } catch (_) { /* nothing selected */ }
+            this.emitEvent(node, element, 'dblclick')
+                .catch((err) => console.warn('Action execution failed:', err))
         })
     }
 
@@ -6725,11 +6751,14 @@ export class OverseerRenderer {
      * checkbox that only shows something, a date, a group or a list with no action of its own -
      * so the whole of an entry is its button except the parts that are something else's. An
      * entry inside another pressable entry is the first thing reached, so the innermost wins.
+     * For a double tap, `gesture` is `dblclick`, and a node inside that answers double taps is
+     * such an entry too.
      */
-    whatTakesTheTap(target, pressable) {
+    whatTakesTheTap(target, pressable, gesture = 'click') {
         let el = target
         while (el && el !== pressable) {
             if (el.classList && el.classList.contains('overseer-pressable')) return el
+            if (gesture === 'dblclick' && el.dataset && el.dataset.doubleTaps === '1') return el
             if (this.answersForItself(el)) return el
             el = el.parentElement
         }
@@ -6789,7 +6818,7 @@ export class OverseerRenderer {
 
     /// A field that passes its taps to the entry it sits in cannot also answer a double tap.
     passesItsTapsOn(el, node) {
-        return !!(el && el.closest && el.closest('.overseer-pressable')) && !this.canBeChangedHere(node, el)
+        return !!(el && el.closest && el.closest('.overseer-pressable, [data-double-taps="1"]')) && !this.canBeChangedHere(node, el)
     }
 
     // Render simple controls for event handler blocks (e.g., an on click button)
@@ -9145,6 +9174,9 @@ export class OverseerRenderer {
                 if (call.into && answer !== null && this.writeCallAnswer(call.into, answer)) continue
                 if (failed) {
                     try { app.setStatus && app.setStatus(answer, '', 'error') } catch (_) { /* said in the console */ }
+                } else if (call.name === 'copy' && answer) {
+                    // A clipboard shows nothing of what went onto it, so the page says it did.
+                    try { app.setStatus && app.setStatus(answer, '', 'info') } catch (_) { /* copied all the same */ }
                 }
             }
         })()
@@ -14411,7 +14443,7 @@ try {
     async emitEvent(node, element, eventName, withValue) {
         if (!this.app || !this.app.currentDocument) return
         // What a floating div this press opens is anchored to - see `noteFloatOpener`.
-        if (element && (eventName === 'click' || eventName === 'hold')) this._lastPressed = element
+        if (element && (eventName === 'click' || eventName === 'hold' || eventName === 'dblclick')) this._lastPressed = element
         const path = (element && element.dataset && element.dataset.path)
             ? JSON.parse(element.dataset.path)
             : (node.__overseer_path || [node.name || node.node_type || node.type || 'root'])
