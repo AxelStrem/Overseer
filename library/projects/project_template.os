@@ -587,57 +587,82 @@ tab project (label=$(name), mutable=true) {
             }
         }
 
-        div Finished (layout="vertical", margin=0, spacing=2) {
-            div (layout="horizontal", margin=0, spacing=6, padding=2, alignment="center") {
-                timestamp finished_at (format="datetime", precision="minutes", width=16%) =
-                    "2026-01-01T00:00:00Z"
-                timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
-                string title (width=24%) = ""
-                enum status (label="", vocabulary="/project/Statuses", width=10%) = "finished"
-                string handle (label="", font-size=11px, width=8%) = ""
-                string owner (hidden=true) = ""
-                string assignee (hidden=true) = ""
-                string parent (hidden=true) = ""
-                tags after (hidden=true) = ""
-                tags labels (label="", vocabulary="/project/Labels", width=12%) = ""
-                tags milestones (label="", vocabulary="/project/Milestones", shape="slant", width=10%) = ""
-                tags flags (hidden=true) = ""
-                int points (label="", format="trim", width=5%) = 0
-                enum complexity (label="", vocabulary="/project/Complexities", width=6%) = "unassigned"
-                timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
+        div Finished (layout="horizontal", margin=0, margin-bottom=3px, spacing=6, padding=2, alignment="center",
+                      background-color="inherit") {
+            context hover-text = true
 
-                button talk (icon="note", margin=0, width=3%,
-                             font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
-                    on click {
-                        toggle_fold (path="../Talk")
-                    }
-                }
-                button work (icon="burger", margin=0, width=3%, hidden=$(../Agents/Work.count() == 0)) {
-                    on click {
-                        toggle_fold (path="../Agents")
-                    }
-                }
+            timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
+            string handle (label="id", font-size=11px, width=14%) = ""
+            mark (type="separator")
+            enum owner (label="by", vocabulary="/project/people/People", chip="icon", placeholder="", clearable=true, font-size=11px, width=32px,
+                        alignment="center",
+                        hover-text=$(../owner == "" ? "Nobody owned this item" : "This item was owned by <@" + ../owner + ">")) = ""
+            mark (type="separator")
+            enum assignee (label="for", vocabulary="/project/people/People", chip="icon", placeholder="", clearable=true, font-size=11px, width=32px,
+                           alignment="center",
+                           hover-text=$(../assignee == "" ? "Nobody was to work this item" : "This item was for <@" + ../assignee + ">")) = ""
+            mark (type="separator")
+            string title (label="title", font-size=14px, width=35%,
+                          hover-text="Item title or short description") = ""
+            mark (type="separator")
+            enum status (label="status", vocabulary="/project/Statuses", width=7%, alignment="center",
+                         hover-text=$("This item was " + ../status)) = "finished"
+            string parent (hidden=true) = ""
+            tags after (hidden=true) = ""
+            mark (type="separator")
+            tags labels (label="tags", vocabulary="/project/Labels", width=8%,
+                         hover-text="Project tags") = ""
+            mark (type="separator")
+            tags milestones (label="milestones", vocabulary="/project/Milestones", shape="slant", width=8%,
+                             hover-text="Milestones") = ""
+            mark (type="separator")
+            tags flags (label="flags", vocabulary="/project/Flags", width=6%,
+                        hover-text="Workflow flags") = ""
+            mark (type="separator")
+            int points (label="pts", format="trim", width=3%, alignment="center",
+                        hover-text="Points") = 0
+            mark (type="separator")
+            enum complexity (label="think", vocabulary="/project/Complexities", width=6%, alignment="center",
+                             hover-text="How much thinking building it took") = "unassigned"
+            timestamp touched_at (hidden=true) = "2026-01-01T00:00:00Z"
+            mark (type="separator")
+            timestamp finished_at (label="closed", mode="elapsed", font-size=11px, width=6%,
+                                   hover-text="Time since it was closed") = "2026-01-01T00:00:00Z"
 
-                // Back on the open list at filed, with what the record kept. Hidden while the
-                // parent is closed too, so a closed item never has an open part: reopen the
-                // parent first. The task history keeps the record of the earlier finish.
-                button reopen (icon="arrow-up", margin=0, width=3%,
-                               hidden=$(/project/History.filter(|x| x/handle == ../parent).count() > 0)) {
-                    on click {
-                        if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() == 0)) {
-                            prepend (list="/project/Items", from="..") {
-                                - complexity = "unassigned"
-                                - touched_at = $(now())
-                            }
-                            remove (from="/project/History", keyField="handle", keyValue=$(../handle))
+            mark (type="separator")
+            button talk (icon="note", margin=0, width=36px, hover-text="Comments",
+                         font-color=$(../Talk/Comments.count() == 0 ? "#6b7280" : "inherit")) {
+                on click {
+                    toggle_fold (path="../Talk")
+                }
+            }
+            button work (icon="burger", margin=0, width=36px, hover-text="Agent sessions",
+                         hidden=$(../Agents/Work.count() == 0)) {
+                on click {
+                    toggle_fold (path="../Agents")
+                }
+            }
+
+            // Back on the open list at filed, with what the record kept. Hidden while the
+            // parent is closed too, so a closed item never has an open part: reopen the
+            // parent first. The task history keeps the record of the earlier finish.
+            button reopen (icon="arrow-up", margin=0, width=36px, hover-text="Back to the open list, at filed",
+                           hidden=$(/project/History.filter(|x| x/handle == ../parent).count() > 0)) {
+                on click {
+                    if (cond=$(/project/Items.filter(|x| x/handle == ../handle).count() == 0)) {
+                        prepend (list="/project/Items", from="..") {
+                            - complexity = "unassigned"
+                            - touched_at = $(now())
                         }
+                        remove (from="/project/History", keyField="handle", keyValue=$(../handle))
                     }
                 }
             }
-            div Talk (foldable=true, folded=true, layout="vertical", margin=0) {
+
+            div Talk (foldable=true, folded=true, span="row", layout="vertical", margin=0, spacing=4) {
                 list Comments (entry=<Comment>, layout="vertical", spacing=4, border-style=none) { }
             }
-            div Agents (foldable=true, folded=true, layout="vertical", margin=0) {
+            div Agents (foldable=true, folded=true, span="row", layout="vertical", margin=0) {
                 list Work (entry=<Run>, view="table", header=true, spacing=1) { }
             }
             string colour (hidden=true) =
@@ -863,7 +888,7 @@ tab project (label=$(name), mutable=true) {
     }
 
     tab (label="Closed", hover-text="Finished and cancelled items, newest first") {
-        list History (entry=<Finished>, key="handle", window=20, parts=$(|x| week(x/finished_at)), layout="vertical", spacing=1, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) { }
+        list History (entry=<Finished>, key="handle", window=20, parts=$(|x| week(x/finished_at)), layout="vertical", spacing=1, view="table", header=true, sticky=true, sort_by=$(|x| 0 - millis_since_epoch(x/finished_at))) { }
     }
 
     // A tracker writes `- Discussion { ... }` beside `- Items` once it holds any topic. Its ids
