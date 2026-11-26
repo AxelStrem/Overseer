@@ -33,7 +33,9 @@ is right. The section names below are the specification's, for reading further.
 - **Style**: `background-color`, `font-size`, `font-weight`, `font-color`, `border-style`,
   `border-radius`, `shadow`, `hide-labels`.
 - **Lists**: `entry`, `key`, `view` (`table`, `board`, `canvas`), `sort_by`, `window`, `parts`,
-  `tree`, `movable`, `sortable`, `copyable`, `header`, `sticky`.
+  `tree`, `movable`, `sortable`, `copyable`, `header`, `sticky`; a canvas's `x`, `y` and `lines`
+  (fields naming other entries by key, each styled by its own `line-color`, `line-style`,
+  `line-arrow`).
 - **Top-level nodes**: `tick` (how often `on tick` runs).
 
 Any parameter can be a formula: `background-color=$(late ? "#fee2e2" : "#ffffff")`.

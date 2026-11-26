@@ -1008,6 +1008,35 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     opacity: 0.35;
 }
 
+/* The lines a canvas's `lines=` draws between its cards lie under them, and are pointed at only
+   where no card stands, for the hover saying what joins them. */
+.canvas-area > svg.canvas-lines {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 0;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.canvas-line {
+    stroke: var(--ov-text, currentColor);
+    stroke-opacity: 0.55;
+    stroke-width: 2;
+    stroke-linecap: round;
+    pointer-events: visibleStroke;
+}
+
+.canvas-line:hover {
+    stroke-opacity: 1;
+    stroke-width: 3;
+}
+
+.canvas-line-head {
+    fill: var(--ov-text, currentColor);
+    fill-opacity: 0.55;
+}
+
 .canvas-scroll.drop-here {
     outline: 2px dashed var(--ov-accent);
     outline-offset: 1px;

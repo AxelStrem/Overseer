@@ -4910,6 +4910,9 @@ export class OverseerRenderer {
         if (!x || !y || this.entriesAreTabs(node)) return
         element.dataset.canvasX = x
         element.dataset.canvasY = y
+        const lines = String(this.getParameterValue(node, 'lines') ?? '').trim()
+        if (lines) element.dataset.canvasLines = lines
+        else delete element.dataset.canvasLines
         // The cards lay the canvas out; the list's own direction would only fight them.
         element.classList.add('view-canvas')
         element.classList.remove('layout-vertical', 'layout-horizontal', 'layout-flow')
@@ -5011,8 +5014,201 @@ export class OverseerRenderer {
         }
         strip.hidden = strip.children.length === 0
         this.sizeCanvas(area, placed)
-        // Drawn before it is on the page, a card has no size yet to grow the area by.
-        if (!element.isConnected) requestAnimationFrame(() => this.sizeCanvas(area, placed))
+        this.drawCanvasLines(element, node)
+        // Drawn before it is on the page, a card has no size yet to grow the area by, nor an
+        // edge for a line to meet.
+        if (!element.isConnected) requestAnimationFrame(() => {
+            this.sizeCanvas(area, placed)
+            this.drawCanvasLines(element, node)
+        })
+    }
+
+    /**
+     * The lines of a canvas: `lines=` names fields of its entries, each holding the key of
+     * another entry of the same list, or several, and a line joins the two cards. A field that is
+     * a formula joins whatever its rule names, so the canvas needs no rule of its own.
+     *
+     * The field, as its template writes it, says how its lines look: `line-color`, `line-style`
+     * (`solid`, `dashed`, `dotted`) and `line-arrow=true` for a relation one way, drawn with a
+     * head at the card named. One that is not one way is mutual: a pair is drawn once, whichever
+     * side names it. A card with no place, filtered out or hidden draws none.
+     *
+     * Read from where the cards stand on the page, so a card just let go is joined where it
+     * shows, and written to be run again at any time.
+     */
+    drawCanvasLines(element, node) {
+        const area = element.querySelector(':scope > .overseer-canvas > .canvas-scroll > .canvas-area')
+        if (!area) return
+        const SVG = 'http://www.w3.org/2000/svg'
+        let svg = area.querySelector(':scope > svg.canvas-lines')
+        const names = String(element.dataset.canvasLines || '').split(',').map((s) => s.trim()).filter(Boolean)
+        if (names.length === 0 || !node) {
+            if (svg) svg.remove()
+            return
+        }
+        if (!svg) {
+            svg = document.createElementNS(SVG, 'svg')
+            svg.setAttribute('class', 'canvas-lines')
+            svg.setAttribute('aria-hidden', 'true')
+            area.insertBefore(svg, area.firstChild)
+        }
+        while (svg.firstChild) svg.removeChild(svg.firstChild)
+
+        const keyName = String(this.getParameterValue(node, 'key') ?? '').trim()
+        const template = this.templateNamed(this.entryTemplateOf(node))
+        const byUid = new Map()
+        for (const el of area.querySelectorAll(':scope > [data-uid]')) byUid.set(el.getAttribute('data-uid'), el)
+        const cards = []
+        const byKey = new Map()
+        for (const entry of this.inDisplayOrder(node)) {
+            const el = entry && entry.__uid ? byUid.get(entry.__uid) : null
+            if (!el || el.hidden || el.classList.contains('filtered-out')) continue
+            const left = parseFloat(el.style.left)
+            const top = parseFloat(el.style.top)
+            if (!Number.isFinite(left) || !Number.isFinite(top)) continue
+            const w = el.offsetWidth || 220
+            const h = el.offsetHeight || 80
+            const keyField = keyName ? this.entryField(entry, keyName) : null
+            const key = keyField ? String(this.getNodeValue(keyField) ?? '').trim() : ''
+            const card = { entry, key, box: { cx: left + w / 2, cy: top + h / 2, hw: w / 2, hh: h / 2 } }
+            cards.push(card)
+            if (key && !byKey.has(key)) byKey.set(key, card)
+        }
+
+        // Each relation is drawn once: a mutual one for the pair, a one-way one for its direction,
+        // with a second head when both cards name each other.
+        const drawn = new Map()
+        for (const name of names) {
+            const style = (template && this.entryField(template, name)) || null
+            const read = (param) => {
+                const own = style ? this.getParameterValue(style, param) : null
+                return own === null || own === undefined ? null : own
+            }
+            const arrow = String(read('line-arrow') ?? '').toLowerCase() === 'true'
+            const colour = read('line-color')
+            const look = {
+                colour: colour !== null ? String(this.convertColorValue(colour) || colour) : '',
+                dash: String(read('line-style') ?? 'solid').toLowerCase(),
+                label: String(read('label') ?? name),
+                arrow,
+            }
+            for (const from of cards) {
+                const field = this.entryField(from.entry, name)
+                if (!field) continue
+                const named = String(this.getNodeValue(field) ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+                for (const key of named) {
+                    const to = byKey.get(key)
+                    if (!to || to === from) continue
+                    const pair = [from.key, to.key].sort().join('\u0000')
+                    const id = `${name}\u0000${pair}`
+                    const had = drawn.get(id)
+                    if (had) {
+                        if (arrow && had.from !== from) had.both = true
+                        continue
+                    }
+                    drawn.set(id, { from, to, look, both: false })
+                }
+            }
+        }
+
+        const defs = document.createElementNS(SVG, 'defs')
+        svg.appendChild(defs)
+        const heads = new Map()
+        const headFor = (colour) => {
+            if (heads.has(colour)) return heads.get(colour)
+            if (!this._canvasHeadCount) this._canvasHeadCount = 0
+            const id = `canvas-head-${++this._canvasHeadCount}`
+            const marker = document.createElementNS(SVG, 'marker')
+            marker.setAttribute('id', id)
+            marker.setAttribute('viewBox', '0 0 10 10')
+            marker.setAttribute('refX', '10')
+            marker.setAttribute('refY', '5')
+            marker.setAttribute('markerWidth', '7')
+            marker.setAttribute('markerHeight', '7')
+            marker.setAttribute('orient', 'auto-start-reverse')
+            const tip = document.createElementNS(SVG, 'path')
+            tip.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z')
+            if (colour) { tip.setAttribute('fill', colour); tip.setAttribute('fill-opacity', '0.55') }
+            else tip.setAttribute('class', 'canvas-line-head')
+            marker.appendChild(tip)
+            defs.appendChild(marker)
+            heads.set(colour, id)
+            return id
+        }
+        // Where the line from one card's centre towards another's leaves its border.
+        const edge = (box, dx, dy) => {
+            const t = Math.min(dx ? box.hw / Math.abs(dx) : Infinity, dy ? box.hh / Math.abs(dy) : Infinity)
+            return { x: box.cx + dx * t, y: box.cy + dy * t }
+        }
+        const dashes = { dashed: '8 5', dotted: '2 4' }
+        // Two cards joined by several relations get a line for each, side by side.
+        const sharing = new Map()
+        for (const one of drawn.values()) {
+            const pair = [one.from.key, one.to.key].sort().join('\u0000')
+            if (!sharing.has(pair)) sharing.set(pair, [])
+            sharing.get(pair).push(one)
+        }
+        for (const { from, to, look, both } of drawn.values()) {
+            const dx = to.box.cx - from.box.cx
+            const dy = to.box.cy - from.box.cy
+            if (!dx && !dy) continue
+            const a = edge(from.box, dx, dy)
+            const b = edge(to.box, -dx, -dy)
+            const pair = sharing.get([from.key, to.key].sort().join('\u0000'))
+            if (pair.length > 1) {
+                // Measured across the pair the same way whichever card the line starts from.
+                const flip = from.key < to.key ? 1 : -1
+                const length = Math.hypot(dx, dy)
+                const shift = 7 * (pair.findIndex((one) => one.from === from && one.to === to && one.look === look) - (pair.length - 1) / 2)
+                const nx = (-dy / length) * shift * flip
+                const ny = (dx / length) * shift * flip
+                a.x += nx; a.y += ny; b.x += nx; b.y += ny
+            }
+            const line = document.createElementNS(SVG, 'line')
+            line.setAttribute('x1', String(Math.round(a.x)))
+            line.setAttribute('y1', String(Math.round(a.y)))
+            line.setAttribute('x2', String(Math.round(b.x)))
+            line.setAttribute('y2', String(Math.round(b.y)))
+            line.setAttribute('class', 'canvas-line')
+            line.dataset.from = from.key
+            line.dataset.to = to.key
+            // Inline, as the stylesheet's own stroke would win over an attribute.
+            if (look.colour) line.style.stroke = look.colour
+            if (dashes[look.dash]) line.setAttribute('stroke-dasharray', dashes[look.dash])
+            if (look.arrow) {
+                const head = `url(#${headFor(look.colour)})`
+                line.setAttribute('marker-end', head)
+                if (both) line.setAttribute('marker-start', head)
+            }
+            const title = document.createElementNS(SVG, 'title')
+            title.textContent = `${from.key} ${look.label} ${to.key}`
+            line.appendChild(title)
+            svg.appendChild(line)
+        }
+        svg.setAttribute('width', area.style.width ? String(parseFloat(area.style.width)) : '0')
+        svg.setAttribute('height', area.style.height ? String(parseFloat(area.style.height)) : '0')
+
+        // A card that folds open moves its edge; the lines follow it.
+        if (typeof ResizeObserver !== 'undefined') {
+            if (!area._linesObserver) {
+                area._linesObserver = new ResizeObserver(() => {
+                    if (area._linesPending) return
+                    area._linesPending = true
+                    requestAnimationFrame(() => {
+                        area._linesPending = false
+                        if (area.isConnected) this.drawCanvasLines(element, this.canvasNodeOf(element))
+                    })
+                })
+            }
+            for (const el of byUid.values()) area._linesObserver.observe(el)
+        }
+    }
+
+    /// The list a canvas on the page draws, as the document now holds it.
+    canvasNodeOf(element) {
+        const doc = this.app && this.app.currentDocument
+        if (!doc) return null
+        try { return this.findNodeByPath(doc, JSON.parse(element.dataset.path || '[]')) } catch (_) { return null }
     }
 
     /// Grow a canvas's area to hold its farthest card, with room beyond it to drag one further.
@@ -5079,6 +5275,7 @@ export class OverseerRenderer {
         drag.entry.style.left = `${x}px`
         drag.entry.style.top = `${y}px`
         if (drag.entry.parentElement !== area) area.appendChild(drag.entry)
+        if (list.dataset.canvasLines) this.drawCanvasLines(list, this.canvasNodeOf(list))
         this.writeByInstruction(drag.entry, 'set_overseer_entry_fields', {
             entry_path: entryPath,
             entryPath,
@@ -7003,6 +7200,10 @@ export class OverseerRenderer {
         for (const board of this.scopedAll('.overseer-board')) this.countBoardColumns(board)
         // A tree's lines run on only to what shows.
         for (const tree of this.scopedAll('.overseer-list.view-tree')) this.drawTreeLines(tree)
+        // And a canvas's to the cards that show.
+        for (const canvas of this.scopedAll('.overseer-list.view-canvas[data-canvas-lines]')) {
+            this.drawCanvasLines(canvas, this.canvasNodeOf(canvas))
+        }
     }
 
     /**

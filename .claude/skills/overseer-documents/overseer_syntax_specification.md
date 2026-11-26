@@ -620,6 +620,28 @@ above the area, one row that scrolls sideways, where it can be seen and picked u
 area grows to hold its farthest card and scrolls both ways, by touch too. A card is the entry
 drawn as anywhere else, as wide as its template's `width` says, or 220px.
 
+`lines=` names fields of the entries that name other entries of the same list by their key - a
+`string` or an `enum` holding one, a `tags` holding several - and the canvas joins each card to
+the cards it names with a line drawn under them. The field, as the template writes it, says how
+its lines look: `line-color`, `line-style` (`solid`, `dashed` or `dotted`), and `line-arrow=true`
+for a relation one way, drawn with a head at the card named, or at both ends when the two cards
+name each other. A relation without an arrow is mutual, and is drawn once for a pair whichever
+side names it. Pointed at, a line says what joins the cards, with the field's label: "SEARCH needs
+TAGS". A key that names no entry, and a card with no place yet or filtered out, draw no line.
+Since the field can be a formula, any rule for which cards are joined is a field of the entry.
+
+```overseer
+div Idea (layout="vertical") {
+    string name = ""
+    tags needs (vocabulary="/Ideas", line-arrow=true) = ""
+    tags clashes (vocabulary="/Ideas", line-color="#be123c", line-style="dashed") = ""
+    float x (hidden=true) = 0
+    float y (hidden=true) = 0
+}
+
+list Ideas (entry=<Idea>, key="name", view="canvas", x="x", y="y", lines="needs, clashes") { }
+```
+
 #### Drawing a list as a tree
 
 `tree=` draws a list as an outline: each entry under its parent, indented by its depth, with lines
@@ -3474,7 +3496,7 @@ div Tasks {
 - **Values**: `precision`, `format`, `prefix`, `suffix`, `shown`, `mode` (`elapsed`, `remaining`, on a `timestamp`), `view` (`progress`, on an `int` or `float`; `select` and `segments`, on an `enum`), `limit`, `color`
 - **Actions**: `path`, `list`, `to`, `from`, `template`, `value`, `keyField`, `keyValue`, `field`, `by`, `order`, `at`, `position`, `mode`, `clock`, `offset`, `cond`
 - **Charts**: `kind` (`line`, `pie`, `bar`), `curve`, `smoothing`, `x-scale`, `domain-x-min`, `domain-x-max`, `domain-y-min`, `domain-y-max`; on a `plot`: `source`, `x`, `y`, `amount`, `limit`, `suffix`, `label`, `color`
-- **Lists**: `entry`, `key`, `window`, `parts`, `sort_by`, `view` (`table`, `board`, `canvas`), `by`, `x` and `y` (a canvas's position fields), `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
+- **Lists**: `entry`, `key`, `window`, `parts`, `sort_by`, `view` (`table`, `board`, `canvas`), `by`, `x` and `y` (a canvas's position fields), `lines` (the fields a canvas joins cards by; `line-color`, `line-style` and `line-arrow` on each of them), `tree`, `indent`, `header`, `sticky`, `movable`, `sortable` (`movable=false` on an entry: it stays where it is), `span` (`row`, on a node of a table's entry)
 - **Grids**: `entry`, `columns`, `rows`, `header`
 - **Arrays**: `entry`, `length`, `header`, `layout`
 - **Mounts**: `source`, `lazy`, `mutable`, `hidden`
