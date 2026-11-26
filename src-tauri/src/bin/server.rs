@@ -565,6 +565,12 @@ fn field<'a>(fields: &'a Fields, name: &str) -> &'a str {
     fields.get(name).map(|s| s.as_str()).unwrap_or("")
 }
 
+/// A link to a node - `/doc/ap31/x.os#project/Items/[scan]` - followed by someone not signed in
+/// arrives here with the node after `#`, which a browser keeps through a redirect but never sends
+/// the server: put back on where the form goes after, unless what it goes to names one already.
+const SIGN_IN_KEEPS_THE_NODE: &str = "<script>(function(){var f=document.forms[0],n=f&&f.elements.next;\
+if(n&&location.hash&&n.value.indexOf('#')<0)n.value+=location.hash})()</script>";
+
 fn sign_in_form(status: StatusCode, next: &str, said: Option<&str>) -> Response {
     form_page(
         status,
@@ -577,8 +583,9 @@ fn sign_in_form(status: StatusCode, next: &str, said: Option<&str>) -> Response 
 <input id=\"username\" name=\"username\" autocomplete=\"username\" autocapitalize=\"none\" required autofocus>\
 <label for=\"password\">Password</label>\
 <input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required>\
-<button>Sign in</button></form>",
-            next = escaped_for_html(next)
+<button>Sign in</button></form>{keep_the_node}",
+            next = escaped_for_html(next),
+            keep_the_node = SIGN_IN_KEEPS_THE_NODE,
         ),
     )
 }

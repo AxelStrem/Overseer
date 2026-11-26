@@ -258,3 +258,30 @@ fn a_sharer_is_told_what_each_entry_comes_to() {
     assert!(none.body.contains(r#"{"shares":[]}"#), "{}", none.body);
     assert_eq!(get(port, "/account/sharing", &[]).status, 401);
 }
+
+#[test]
+fn a_link_to_a_node_lands_on_it_after_signing_in() {
+    let _shared = shared();
+    let server = start(4834, "next");
+    let port = server.port;
+    let _ = ap31_and_bob(&server);
+
+    // A browser keeps the part after `#` through the redirect, and the form puts it back on.
+    let way_in = get(port, "/doc/ap31/foods.os", &["Accept: text/html".to_string()]);
+    assert_eq!(way_in.status, 303, "{}", way_in.headers);
+    assert!(way_in.headers.contains("/signin?next=/doc/ap31/foods.os"), "{}", way_in.headers);
+    let page = get(port, "/signin?next=/doc/ap31/foods.os", &[]);
+    assert!(page.body.contains("location.hash"), "{}", page.body);
+
+    let signed_in = form(
+        port,
+        "/signin",
+        "next=%2Fdoc%2Fap31%2Ffoods.os%23foods%2Fapple&username=bob&password=bobs+password",
+    );
+    assert_eq!(signed_in.status, 303, "{}", signed_in.headers);
+    assert!(
+        signed_in.headers.to_ascii_lowercase().contains("location: /doc/ap31/foods.os#foods/apple"),
+        "{}",
+        signed_in.headers
+    );
+}

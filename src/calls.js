@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { docAddress, fullName } from './account.js'
 
 /**
  * What a document's `call` asks of the page: one operation of a fixed set, run once the press is
@@ -64,7 +65,14 @@ export const OPERATIONS = {
         // Lying over the page, the drawer makes way for what was opened from it.
         if (app.drawer && app.drawer.overlaid()) app.drawer.fold(true)
         if (place === (app.currentFile ? String(app.currentFile) : null)) return
-        if (inBrowser()) return void navigate('/doc/' + place.split('/').map(encodeURIComponent).join('/'))
+        if (inBrowser()) {
+            // A drawer names a person's own documents short; the address names them in full, so
+            // the two are compared as the server resolves them - see `fullName`.
+            const full = await fullName(place)
+            const open = app.account && app.account.document
+            if (full && open && full === open) return
+            return void navigate(docAddress(full || place))
+        }
         await app.loadFile(place)
     },
     async undo(_, app) {
@@ -116,7 +124,7 @@ export const OPERATIONS = {
     }),
     sharing: browser(async () => {
         const made = await request('POST', '/account/sharing', {})
-        navigate('/doc/' + String(made.document).split('/').map(encodeURIComponent).join('/'))
+        navigate(docAddress(made.document))
     }),
     sharing_reach: browser(async () => describeReach(await request('GET', '/account/sharing'))),
     sign_out: browser(async () => {

@@ -152,6 +152,17 @@ impl DocumentRoot {
         }
     }
 
+    /// The one spelling of a document's name, whichever way whoever is asking wrote it: `named`
+    /// for anything under the root, a library's document as it was written - it is in nobody's
+    /// folder. What is kept for a viewer is kept under this, so a document opened at its short
+    /// address and at its full one is one document to them, with one set of what they look at.
+    pub fn full_name(&self, name: &str) -> String {
+        if name.starts_with(LIBRARY) || name == crate::drawer::LIBRARY_NAME {
+            return name.to_string();
+        }
+        self.named(name)
+    }
+
     /// Work in a document's folder, under the settings this server keeps beside its documents -
     /// see `environment`. Every document it works out is drawn through them.
     ///
@@ -499,8 +510,10 @@ impl DocumentRoot {
         let text = std::fs::read_to_string(&path)
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
         // Naming the document is what lets its mounts resolve against its own directory, and
-        // what keeps two documents being served at once from deciding for each other.
-        self.within(Some(path.clone()), || app_api::load_document_for(text, name, session))
+        // what keeps two documents being served at once from deciding for each other. Named in
+        // full, as what is kept for the viewer is - see `full_name`.
+        let full = self.full_name(name);
+        self.within(Some(path.clone()), || app_api::load_document_for(text, &full, session))
         .map_err(|e| RequestError::Failed(format!("could not resolve '{}': {:?}", name, e)))
     }
 }
@@ -734,6 +747,10 @@ impl DocumentRoot {
             Some(name) => Some(self.resolve(name)?),
             None => None,
         };
+        // Named in full from here on, so what is kept for the viewer is kept once - see
+        // `full_name`. Resolved above as it was asked, so what is not there is said as asked.
+        let full = document.map(|name| self.full_name(name));
+        let document = full.as_deref();
         let named = document.is_some();
         // Which text the page is showing, so a change it sends is described against that - see
         // `app_api::describing_for`. Only a change reads it.
@@ -1207,7 +1224,11 @@ impl DocumentRoot {
                         Err(_) => None,
                     }
                 });
-                Ok(serde_json::json!({ "asker": asker, "can": can }))
+                // Its full name - `me/x.os` for a person's own `x.os` - for the page to show, so
+                // the address its owner copies is the one whoever it is shared with can open.
+                // Only of a document the asker may open; already in full - see `answer`.
+                let full = document.filter(|_| can.is_some());
+                Ok(serde_json::json!({ "asker": asker, "can": can, "document": full }))
             }
             // What a document calls itself - its first tab's label - for a drawer naming an entry
             // it is given only the path of. Only a document the asker may read tells them; any
@@ -1873,6 +1894,8 @@ impl DocumentRoot {
         answer: impl FnOnce(&[OverseerNode]) -> A,
     ) -> std::result::Result<(T, A), RequestError> {
         let path = self.resolve(name)?;
+        // What is kept for the viewer is kept under one spelling - see `full_name`.
+        let viewer = self.full_name(name);
         // Until the write is done: another write starting from this same text would be written
         // over by this one, or write over it - see `writelock`.
         let _held = crate::writelock::lock(&path);
@@ -1880,15 +1903,15 @@ impl DocumentRoot {
             .map_err(|e| RequestError::Failed(format!("could not read '{}': {}", name, e)))?;
         let text_before = text.clone();
         let dir = Some(path.clone());
-        let looking_at = crate::viewstate::overlay(session, name);
+        let looking_at = crate::viewstate::overlay(session, &viewer);
         let held_for_the_viewer: Vec<String> = looking_at.keys().cloned().collect();
-        let _more = crate::viewstate::reading_more(session, name);
+        let _more = crate::viewstate::reading_more(session, &viewer);
         // Where the document as this viewer last saw it is held, if it still describes this text
         // and what they hold - see `viewstate::worked_out`. The page's presses found it there
         // since `guardedspeed`; this one did not, and every press after the first on a board of
         // guarded cells worked the whole document out again.
         let viewers_text = (!looking_at.is_empty())
-            .then(|| crate::viewstate::worked_out_as(session, name, &app_api::version_of(&text)))
+            .then(|| crate::viewstate::worked_out_as(session, &viewer, &app_api::version_of(&text)))
             .flatten();
         // The text the cache holds the document worked on under, and its graph with it.
         let held_as = viewers_text.clone().unwrap_or_else(|| text.clone());
@@ -2030,7 +2053,7 @@ impl DocumentRoot {
         // text rather than the file's.
         let theirs = !held_for_the_viewer.is_empty() || !settled.viewers.is_empty();
         for (address, value) in settled.viewers {
-            crate::viewstate::set(session, name, &address, value);
+            crate::viewstate::set(session, &viewer, &address, value);
         }
         phase("edit viewers", &mut since);
         let along = app_api::write_through_mounts(&path, through_mounts).map_err(|e| match e.kind() {
@@ -2069,7 +2092,7 @@ impl DocumentRoot {
                 self.within(dir, || {
                     crate::app_api::keep_worked_out(&held_as, &serialized, nodes, whole)
                 });
-                crate::viewstate::worked_out(session, name, &app_api::version_of(file_now), &serialized);
+                crate::viewstate::worked_out(session, &viewer, &app_api::version_of(file_now), &serialized);
             } else if settled.text == serialized {
                 let now = if wrote { settled.text.as_str() } else { text_before.as_str() };
                 // In the document's own folder, which is half of what it is kept under - see

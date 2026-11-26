@@ -2304,7 +2304,7 @@ the desktop, a file from the disk in a browser - answers that it is not availabl
 
 | operation | arguments | answers | host |
 | --- | --- | --- | --- |
-| `open` | `path`, the document as the host names it - in a browser, every document there is to open where it names none | | both |
+| `open` | `path`, the document as the host names it - in a browser, every document there is to open where it names none; the address it goes to names the document in full, `/doc/<username>/tasks.os` for a person's own `tasks.os` | | both |
 | `undo` | | | both |
 | `look` | `theme`, `mode` (`light`, `dark`, `system`), `week_start` (a day, or `system`), any of them | | both |
 | `save_profile` | `name`, `colour`, `icon`, `shape` | `Saved.` | browser |

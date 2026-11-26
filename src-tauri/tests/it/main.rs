@@ -46,6 +46,7 @@ mod a_document_held_is_marked_with_the_minute_it_was_worked_out_in;
 mod a_document_in_two_folders_is_two_documents;
 mod a_document_is_as_current_as_what_it_mounts;
 mod a_document_is_drawn_in_the_users_theme;
+mod a_document_is_one_whichever_way_its_owner_names_it;
 mod a_document_is_instantiated_in_one_template_pass;
 #[cfg(feature = "server")]
 mod a_document_keeps_plain_files_beside_it;

@@ -102,9 +102,9 @@
         }
         const body = await response.json().catch(() => null)
         // A session that ran out while the page was open: the way back in, and back here after,
-        // rather than a page whose every call now fails.
+        // rather than a page whose every call now fails - at the node it was showing, too.
         if (response.status === 401) {
-            const here = window.location.pathname + window.location.search
+            const here = window.location.pathname + window.location.search + window.location.hash
             window.location.assign('/signin?next=' + encodeURIComponent(here))
         }
         if (!response.ok) {

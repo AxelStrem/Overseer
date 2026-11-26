@@ -50,6 +50,8 @@ export class Account {
         this.asker = (answer && answer.asker) || 'anyone'
         this.person = (answer && answer.person) || null
         this.can = (answer && answer.can) || null
+        this.document = (answer && answer.document) || null
+        this.showFullName()
         if (this.app && this.app.renderer) this.app.renderer.readOnly = this.can === 'read'
         if (this.can === 'read' && this.app && this.app.currentFile && typeof this.app.updateTitle === 'function') {
             this.app.updateTitle()
@@ -75,12 +77,31 @@ export class Account {
         }
     }
 
-    /// The way in, for a stranger: back to this document once signed in.
+    /// The address bar names the document in full, as the server named it - `/doc/<username>/...`
+    /// for a person's own, even opened at its short address - so the link its owner copies is the
+    /// one whoever it is shared with can open. The page never works a username out itself; the
+    /// node a link points at, after `#`, stays.
+    showFullName() {
+        const full = this.document
+        if (!full || !this.inBrowser) return
+        const shown = this.documentName()
+        if (!shown || shown === full || !decodeURIComponent(window.location.pathname || '').startsWith('/doc/')) return
+        const address = docAddress(full) + window.location.search + window.location.hash
+        try {
+            window.history.replaceState(window.history.state, '', address)
+        } catch (e) {
+            console.warn('[Overseer] could not show the full address', e)
+        }
+    }
+
+    /// The way in, for a stranger: back to this document once signed in, at the node the link
+    /// pointed at. Asked as it is followed, since the address changes after the page is drawn.
     wire() {
         const signIn = document.getElementById('drawer-sign-in')
         if (signIn) {
-            const here = window.location.pathname + window.location.search
-            signIn.setAttribute('href', '/signin?next=' + encodeURIComponent(here))
+            const point = () => signIn.setAttribute('href', signInFromHere())
+            point()
+            signIn.addEventListener('click', point)
         }
     }
 
@@ -124,7 +145,7 @@ export class Account {
             for (const doc of part.documents) {
                 const item = document.createElement('li')
                 const link = document.createElement('a')
-                link.href = '/doc/' + doc.name.split('/').map(encodeURIComponent).join('/')
+                link.href = docAddress(doc.name)
                 link.textContent = doc.shown
                 item.appendChild(link)
                 list.appendChild(item)
@@ -165,4 +186,28 @@ export function groupsOf(listing, me) {
     const unseen = (Array.isArray(listing.public) ? listing.public : []).filter((d) => !seen.has(d))
     if (unseen.length) groups.push({ title: 'Public', parts: [{ documents: unseen.map((d) => entry(d)) }] })
     return groups
+}
+
+/// The page's address for a document, each part of its name encoded.
+export function docAddress(name) {
+    return '/doc/' + String(name).split('/').map(encodeURIComponent).join('/')
+}
+
+/// The way in, and back to where the page is after - the node after `#` too, which a browser
+/// never sends the server, so the server's own redirect cannot carry it.
+export function signInFromHere() {
+    const here = window.location.pathname + window.location.search + window.location.hash
+    return '/signin?next=' + encodeURIComponent(here)
+}
+
+/// A document's full name, as the server says it in its `access` answer for that document:
+/// nothing when it cannot be opened, or the server is one from before it said. Asked only in a
+/// browser - the desktop app names documents by their files.
+export async function fullName(place) {
+    try {
+        const answer = await invoke('access', {}, { headers: { 'Overseer-Document': encodeURIComponent(place) } })
+        return (answer && answer.document) || null
+    } catch (_) {
+        return null
+    }
 }

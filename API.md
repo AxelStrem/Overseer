@@ -90,6 +90,12 @@ other name a person gives is in their own, so `tasks.os` is each person's own ta
 `projects/plan.os` is `<me>/projects/plan.os`. The token alone works in the whole root, as without
 accounts; with `X-Overseer-As` it names documents as that person does.
 
+The page always shows the full name: a person who opens `/doc/tasks.os` finds the address bar at
+`/doc/<me>/tasks.os`, the node after `#` kept, so the link they copy is the one whoever they share
+it with opens. The short form is still taken, by the page and every route, and both are one
+document: what is kept for a viewer - what they look at, what they hold in view - is kept under the
+full name, whichever was asked.
+
 What a person lets others reach is their `sharing.os`, an ordinary document beside their others:
 a list whose entries each say a `document` in their folder, who it is `with` - a username, or
 `everyone` for anyone at all, signed in or not - and what they `can` do, `read` or `edit`.
@@ -169,8 +175,9 @@ document shared only to be read is `403`.
 
 The page asks the same with its `access` command, which answers who is asking (`person`,
 `stranger`, or `anyone` for the token), the person's account, and whether the open document is
-theirs to `edit` or only to `read`. A document shared to be read is drawn with nothing to change,
-whatever its own `mutable` says, and a stranger is offered none of what they would be refused.
+theirs to `edit` or only to `read`, with its full name as `document` when they may open it. A
+document shared to be read is drawn with nothing to change, whatever its own `mutable` says, and a
+stranger is offered none of what they would be refused.
 
 Two files at the root are the server's. `people.os` is the directory of everyone with an account,
 `list People` keyed by `tag` (the username) with each one's `name`: the server writes it whenever
