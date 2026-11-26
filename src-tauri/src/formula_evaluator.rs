@@ -108,12 +108,22 @@ struct PassRoot {
     root: *const OverseerNode,
     len: usize,
     paths: Option<std::collections::HashMap<usize, Vec<String>>>,
-    /// The name of every node outside the contexts - see `may_be_found_below`.
-    names: Option<std::collections::HashSet<String>>,
-    /// The same, for what is under each node a bare name was looked for below, by its pointer.
-    below: std::collections::HashMap<usize, std::collections::HashSet<String>>,
+    /// What names its nodes bear - see `may_be_found_below`.
+    names: NameSets,
+    /// The same for each frame its boundaries handed out, by the frame's top.
+    frame_names: std::collections::HashMap<(usize, usize), NameSets>,
     /// Where the nodes mounts brought in are - see `Boundary`.
     boundaries: Option<Vec<Boundary>>,
+}
+
+/// The names a search going down through a document could find, gathered once for a pass - see
+/// `FormulaEvaluator::may_be_found_below`.
+#[derive(Default)]
+struct NameSets {
+    /// The name of every node outside the contexts.
+    all: Option<std::collections::HashSet<String>>,
+    /// The same, for what is under each node a bare name was looked for below, by its pointer.
+    below: std::collections::HashMap<usize, std::collections::HashSet<String>>,
 }
 
 /// A node a mount brought in from another file, as the pass's document has it.
@@ -993,8 +1003,8 @@ impl FormulaEvaluator {
                 root: root as *const OverseerNode,
                 len: root.len(),
                 paths: None,
-                names: None,
-                below: Default::default(),
+                names: NameSets::default(),
+                frame_names: Default::default(),
                 boundaries: None,
             })
         });
@@ -1025,8 +1035,8 @@ impl FormulaEvaluator {
                 root: root.as_ptr(),
                 len: root.len(),
                 paths: None,
-                names: None,
-                below: Default::default(),
+                names: NameSets::default(),
+                frame_names: Default::default(),
                 boundaries: None,
             });
             true
@@ -1430,29 +1440,27 @@ impl FormulaEvaluator {
     /// milliseconds a read on the project tracker, and every row's theme reads it nine times.
     /// A pass adds no node and renames none, so what it holds is known once for the pass.
     fn may_be_found_below(root: &[OverseerNode], name: &str) -> bool {
-        Self::with_pass_root(|slot| {
-            let Some(held) = slot.as_mut() else { return true };
-            if held.root != root.as_ptr() || held.len != root.len() {
-                return true;
-            }
-            let names = held.names.get_or_insert_with(|| {
-                fn gather(nodes: &[OverseerNode], out: &mut std::collections::HashSet<String>) {
-                    for n in nodes {
-                        if crate::contexts::is_context(n) {
-                            continue;
+        Self::with_name_sets(root, |sets| {
+            sets.all
+                .get_or_insert_with(|| {
+                    fn gather(nodes: &[OverseerNode], out: &mut std::collections::HashSet<String>) {
+                        for n in nodes {
+                            if crate::contexts::is_context(n) {
+                                continue;
+                            }
+                            if !out.contains(&n.name) {
+                                out.insert(n.name.clone());
+                            }
+                            gather(&n.children, out);
                         }
-                        if !out.contains(&n.name) {
-                            out.insert(n.name.clone());
-                        }
-                        gather(&n.children, out);
                     }
-                }
-                let mut out = std::collections::HashSet::new();
-                gather(root, &mut out);
-                out
-            });
-            names.contains(name)
+                    let mut out = std::collections::HashSet::new();
+                    gather(root, &mut out);
+                    out
+                })
+                .contains(name)
         })
+        .unwrap_or(true)
     }
 
     /// Whether a search going down from this node could find a node of this name - the same
@@ -1466,30 +1474,53 @@ impl FormulaEvaluator {
         if !Self::may_be_found_below(root, name) {
             return false;
         }
-        Self::with_pass_root(|slot| {
-            let Some(held) = slot.as_mut() else { return true };
-            if held.root != root.as_ptr() || held.len != root.len() {
-                return true;
-            }
-            let names = held.below.entry(node as *const OverseerNode as usize).or_insert_with(|| {
-                // What `find_value_by_name_deep_from` can land on: no context, and no wrapper,
-                // which it looks through without matching.
-                fn gather(nodes: &[OverseerNode], out: &mut std::collections::HashSet<String>) {
-                    for n in nodes {
-                        if crate::contexts::is_context(n) {
-                            continue;
+        Self::with_name_sets(root, |sets| {
+            sets.below
+                .entry(node as *const OverseerNode as usize)
+                .or_insert_with(|| {
+                    // What `find_value_by_name_deep_from` can land on: no context, and no wrapper,
+                    // which it looks through without matching.
+                    fn gather(nodes: &[OverseerNode], out: &mut std::collections::HashSet<String>) {
+                        for n in nodes {
+                            if crate::contexts::is_context(n) {
+                                continue;
+                            }
+                            if !crate::addressing::is_wrapper(n) && !out.contains(&n.name) {
+                                out.insert(n.name.clone());
+                            }
+                            gather(&n.children, out);
                         }
-                        if !crate::addressing::is_wrapper(n) && !out.contains(&n.name) {
-                            out.insert(n.name.clone());
-                        }
-                        gather(&n.children, out);
                     }
-                }
-                let mut out = std::collections::HashSet::new();
-                gather(&node.children, &mut out);
-                out
+                    let mut out = std::collections::HashSet::new();
+                    gather(&node.children, &mut out);
+                    out
+                })
+                .contains(name)
+        })
+        .unwrap_or(true)
+    }
+
+    /// The names gathered for `root` this pass: the pass's document's, or a frame's that one of
+    /// its boundaries handed out. `None` for any other document, or outside a pass.
+    ///
+    /// A mounted node's formulas are worked out in its frame, and a bare name its host's context
+    /// answers was looked for through the whole mounted list from every ancestor on the way up
+    /// to the top: `accent`, read by each of 2000 mounted entries, cost ten times what it cost in
+    /// the file's own pass. Only a frame the pass holds is keyed by its pointer - it neither moves
+    /// nor changes until the pass root is let go of, and its sets with it.
+    fn with_name_sets<R>(root: &[OverseerNode], f: impl FnOnce(&mut NameSets) -> R) -> Option<R> {
+        Self::with_pass_root(|slot| {
+            let held = slot.as_mut()?;
+            if held.root == root.as_ptr() && held.len == root.len() {
+                return Some(f(&mut held.names));
+            }
+            let is_frame = held.boundaries.as_ref()?.iter().any(|b| {
+                matches!(&b.frame, Some(Some(frame)) if frame.top.as_ptr() == root.as_ptr() && frame.top.len() == root.len())
             });
-            names.contains(name)
+            if !is_frame {
+                return None;
+            }
+            Some(f(held.frame_names.entry((root.as_ptr() as usize, root.len())).or_default()))
         })
     }
 

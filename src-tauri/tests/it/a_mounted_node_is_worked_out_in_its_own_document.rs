@@ -25,6 +25,7 @@ div (hidden=true) {
         float standing = $(/s/standing/x)
         float kcal = $(CAT/Catalog.filter(|f| f/handle == ../food)/kcal)
         string seen = $(accent)
+        float reach = $(x * 3)
     }
 }
 tab s (label="S") {
@@ -115,6 +116,14 @@ fn a_name_above_the_mounted_node_is_looked_for_in_its_own_document() {
         value_at(&host, "weight/CAL/History/[mon]/shown"),
         Some(OverseerValue::Boolean(true))
     );
+}
+
+#[test]
+fn a_bare_name_below_an_ancestor_in_the_mounted_document_is_found_there() {
+    let _serial = serial();
+    let (_sandbox, documents) = sandbox("below", &host_files());
+    let host = documents.open("host.os").expect("open");
+    assert_eq!(number_at(&host, "weight/CAL/History/[mon]/reach"), Some(21.0));
 }
 
 #[test]
