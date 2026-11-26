@@ -2,8 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 
 // A list that says `view="canvas", x="x", y="y"` draws its entries as cards on an open area, each
-// where its two fields say. One whose fields still hold the template's values waits in a strip
-// above the area. A card let go on the area gives its entry both fields as one instruction,
+// where its two fields say, the template's values included. A card let go on the area gives its entry both fields as one instruction,
 // `set_overseer_entry_fields`, named from the entry, and moves nothing in the list.
 
 function setupDOM() {
@@ -36,11 +35,11 @@ const card = (title, x, y, xType = 'float') => base(title, 'div', {}, [
   base('y', 'float', { value: { Float: y }, hidden: { Boolean: true } }),
 ])
 
-const theDocument = ({ mutable = true, xType = 'float' } = {}) => [base('t', 'tab', { mutable: { Boolean: mutable } }, [
+const theDocument = ({ mutable = true, xType = 'float', templateAt = [0, 0] } = {}) => [base('t', 'tab', { mutable: { Boolean: mutable } }, [
   base('Card', 'div', { hidden: { Boolean: true } }, [
     base('title', 'string', { value: { String: '' } }),
-    base('x', xType, { value: xType === 'int' ? { Integer: 0 } : { Float: 0 }, hidden: { Boolean: true } }),
-    base('y', 'float', { value: { Float: 0 }, hidden: { Boolean: true } }),
+    base('x', xType, { value: xType === 'int' ? { Integer: templateAt[0] } : { Float: templateAt[0] }, hidden: { Boolean: true } }),
+    base('y', 'float', { value: { Float: templateAt[1] }, hidden: { Boolean: true } }),
   ]),
   base('Notes', 'list', {
     entry: { Template: '<Card>' }, key: { String: 'title' },
@@ -60,7 +59,6 @@ const render = (options) => {
 
 const list = () => document.querySelector(`.overseer-list[data-path='${JSON.stringify(['t', 'Notes'])}']`)
 const area = () => list().querySelector('.canvas-area')
-const strip = () => list().querySelector('.canvas-strip')
 const scroller = () => list().querySelector('.canvas-scroll')
 const entryAt = (name) => document.querySelector(`[data-path='${JSON.stringify(['t', 'Notes', name])}']`)
 const placings = () => invoke.mock.calls.filter(([cmd]) => cmd === 'set_overseer_entry_fields').map(([, args]) => args)
@@ -73,11 +71,12 @@ const rect = (left, top, width, height) => ({
 const layOut = () => {
   const boxes = new Map()
   boxes.set(scroller(), rect(10, 100, 400, 300))
+  // A card lifted at the frame's edge scrolls it, which jsdom does not do.
+  scroller().scrollBy = vi.fn()
   area().getBoundingClientRect = () => rect(10, 100, 800, 500)
   for (const el of area().querySelectorAll(':scope > [data-uid]')) {
     boxes.set(el, rect(10 + parseFloat(el.style.left), 100 + parseFloat(el.style.top), 50, 40))
   }
-  Array.from(strip().children).forEach((el, k) => boxes.set(el, rect(10 + k * 60, 40, 50, 40)))
   for (const [el, box] of boxes) el.getBoundingClientRect = () => box
   document.elementFromPoint = (x, y) => {
     let found = null
@@ -126,10 +125,22 @@ describe('a list drawn as a canvas', () => {
     expect(entryAt('far').style.left).toBe('600px')
   })
 
-  it('keeps an entry still at the template\'s values in the strip, not under another', () => {
+  it('stands an entry at the template\'s values on the area, at the template\'s place', () => {
     render()
-    expect(entryAt('loose').parentElement).toBe(strip())
-    expect(strip().hidden).toBe(false)
+    expect(entryAt('loose').parentElement).toBe(area())
+    expect(entryAt('loose').style.left).toBe('0px')
+    expect(entryAt('loose').style.top).toBe('0px')
+    expect(list().querySelector('.canvas-strip')).toBeNull()
+  })
+
+  it('stands an entry at the template\'s values where the template says they are not 0', () => {
+    render({ templateAt: [80, 30] })
+    app.currentDocument[0].children[1].children.push(card('fresh', 80, 30))
+    app.renderer.renderDocument(app.currentDocument)
+    expect(entryAt('fresh').parentElement).toBe(area())
+    expect(entryAt('fresh').style.left).toBe('80px')
+    expect(entryAt('fresh').style.top).toBe('30px')
+    expect(entryAt('placed').style.left).toBe('120px')
   })
 
   it('grows its area to hold the farthest card', () => {
@@ -174,7 +185,7 @@ describe('a list drawn as a canvas', () => {
     expect(top).toBe('')
   })
 
-  it('gives an entry from the strip a place once it is dragged onto the area', async () => {
+  it('moves a card from the pile at the template\'s place to a new one, writing both fields', async () => {
     render()
     layOut()
     dragTo(entryAt('loose'), 52, 142)
@@ -251,17 +262,5 @@ describe('a list drawn as a canvas', () => {
     // A field's default margin is written inline, which only an important rule outweighs: kept, it
     // would draw the card that far below the place it was let go at, and every drag would creep.
     expect(bodyOf('.canvas-area > [data-uid]')).toMatch(/margin:\s*0(px)?\s*!important/)
-  })
-
-  it('keeps the strip to one row that scrolls sideways, its cards at their own width', () => {
-    const styles = readFileSync('src/styles.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
-    // Everything the rules naming the given selector say, in order.
-    const bodyOf = (selector) => [...styles.matchAll(/([^{}]+)\{([^}]*)\}/g)]
-      .filter(([, selectors]) => selectors.split(',').some((s) => s.trim() === selector))
-      .map(([, , body]) => body)
-      .join(';')
-    expect(bodyOf('.canvas-strip')).toMatch(/flex-wrap:\s*nowrap/)
-    expect(bodyOf('.canvas-strip')).toMatch(/overflow-x:\s*auto/)
-    expect(bodyOf('.canvas-strip > [data-uid]')).toMatch(/flex:\s*none/)
   })
 })

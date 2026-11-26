@@ -4897,9 +4897,9 @@ export class OverseerRenderer {
      * placed, so a filter, a sort and a window work on a canvas as on any list. Dragging a card
      * writes both fields as one change - see `dropOnCanvas` - and moves nothing in the list.
      *
-     * An entry whose fields both still hold the template's values has no place yet, and is drawn
-     * in a strip above the area rather than stacked unseen at its corner; dragging it onto the area
-     * gives it one. The area grows to hold its farthest card, and scrolls both ways.
+     * An entry stands where its fields say, the template's values included: a new one is at the
+     * template's place, and several may be piled there until they are dragged apart. The area
+     * grows to hold its farthest card, and scrolls both ways.
      *
      * Written to be run again at any time - see `arrangeCanvases`.
      */
@@ -4924,17 +4924,9 @@ export class OverseerRenderer {
         this.listenForEntryDrags(element)
     }
 
-    /// What a number field of a list's entries holds on its template: what an entry holds that
-    /// does not say, and so what says it has no place yet.
-    canvasDefaultOf(node, name) {
-        const template = this.templateNamed(this.entryTemplateOf(node))
-        const field = template ? this.entryField(template, name) : null
-        const held = field ? Number(this.getNodeValue(field)) : NaN
-        return Number.isFinite(held) ? held : 0
-    }
-
-    /// Where an entry stands on its canvas, or null when it has no place yet.
-    canvasPlaceOf(entry, element, defaults) {
+    /// Where an entry stands on its canvas, or null when its fields hold no numbers. An entry
+    /// that holds the template's values stands at them like any other.
+    canvasPlaceOf(entry, element) {
         const read = (name) => {
             const field = this.entryField(entry, name)
             return field ? Number(this.getNodeValue(field)) : NaN
@@ -4942,25 +4934,23 @@ export class OverseerRenderer {
         const x = read(element.dataset.canvasX)
         const y = read(element.dataset.canvasY)
         if (!Number.isFinite(x) || !Number.isFinite(y)) return null
-        if (x === defaults.x && y === defaults.y) return null
         return { x: Math.max(0, x), y: Math.max(0, y) }
     }
 
-    /// Put each card of a canvas where its entry says, or in the strip when it says nowhere.
+    /// Put each card of a canvas where its entry says; one whose fields are no numbers is left
+    /// where it was drawn, below the area, rather than lost.
     arrangeCanvas(element, node) {
         if (!element.dataset.canvasX) return
         let frame = element.querySelector(':scope > .overseer-canvas')
         if (!frame) {
             frame = document.createElement('div')
             frame.className = 'overseer-canvas'
-            const strip = document.createElement('div')
-            strip.className = 'canvas-strip'
             const scroll = document.createElement('div')
             scroll.className = 'canvas-scroll'
             const area = document.createElement('div')
             area.className = 'canvas-area'
             scroll.appendChild(area)
-            frame.append(strip, scroll)
+            frame.append(scroll)
             element.insertBefore(frame, element.firstChild)
             // Where the viewer had scrolled to, kept across the list being drawn again whole.
             const key = element.dataset.path || ''
@@ -4984,36 +4974,25 @@ export class OverseerRenderer {
                 el.classList.add('canvas-front')
             }, { capture: true })
         }
-        const strip = frame.querySelector(':scope > .canvas-strip')
         const area = frame.querySelector(':scope > .canvas-scroll > .canvas-area')
 
         const drawn = new Map()
-        for (const el of element.querySelectorAll(':scope > [data-uid], :scope > .overseer-canvas > .canvas-strip > [data-uid], :scope > .overseer-canvas > .canvas-scroll > .canvas-area > [data-uid]')) {
+        for (const el of element.querySelectorAll(':scope > [data-uid], :scope > .overseer-canvas > .canvas-scroll > .canvas-area > [data-uid]')) {
             drawn.set(el.getAttribute('data-uid'), el)
-        }
-        const defaults = {
-            x: this.canvasDefaultOf(node, element.dataset.canvasX),
-            y: this.canvasDefaultOf(node, element.dataset.canvasY),
         }
         const placed = []
         const front = this._canvasFront && this._canvasFront.get(element.dataset.path || '')
         for (const entry of this.inDisplayOrder(node)) {
             const el = entry && entry.__uid ? drawn.get(entry.__uid) : null
             if (!el) continue
-            const at = this.canvasPlaceOf(entry, element, defaults)
+            const at = this.canvasPlaceOf(entry, element)
             el.classList.toggle('canvas-front', !!at && !!front && el.dataset.path === front)
-            if (at) {
-                el.style.left = `${at.x}px`
-                el.style.top = `${at.y}px`
-                area.appendChild(el)
-                placed.push({ el, at })
-            } else {
-                el.style.left = ''
-                el.style.top = ''
-                strip.appendChild(el)
-            }
+            if (!at) continue
+            el.style.left = `${at.x}px`
+            el.style.top = `${at.y}px`
+            area.appendChild(el)
+            placed.push({ el, at })
         }
-        strip.hidden = strip.children.length === 0
         this.sizeCanvas(area, placed)
         this.drawCanvasLines(element, node)
         // Drawn before it is on the page, a card has no size yet to grow the area by, nor an
@@ -6363,7 +6342,7 @@ export class OverseerRenderer {
         if (!parent) return false
         if (parent === list) return true
         const holds = parent.classList.contains('board-column-body')
-            || parent.classList.contains('canvas-area') || parent.classList.contains('canvas-strip')
+            || parent.classList.contains('canvas-area')
         return holds && parent.closest('.overseer-list') === list
     }
 

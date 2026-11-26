@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // A canvas list that says `lines="needs, with"` joins each card to the cards its entry names, by
 // key, in those fields. The field as the template writes it says how: `line-color`, `line-style`
 // and `line-arrow=true` for a relation one way. A mutual relation is drawn once for a pair, and
-// nothing is drawn to a key that names no card, to a card in the strip, or to one filtered out.
+// nothing is drawn to a key that names no card, or to one filtered out.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -110,10 +110,14 @@ describe('a canvas draws lines between the entries its fields name', () => {
     expect(line.getAttribute('stroke-dasharray')).toBe('8 5')
   })
 
-  it('draws nothing to a key that names no card, or to a card with no place yet', () => {
-    render([['A', 10, 0, 'GONE, C'], ['B', 400, 0], ['C', 0, 0]])
-    // C still stands at the template's place, in the strip.
+  it('draws nothing to a key that names no card', () => {
+    render([['A', 10, 0, 'GONE'], ['B', 400, 0]])
     expect(lines()).toHaveLength(0)
+  })
+
+  it('draws a line to a card standing at the template\'s place', () => {
+    render([['A', 10, 0, 'GONE, C'], ['B', 400, 0], ['C', 0, 0]])
+    expect(lines().map((l) => l.dataset.to)).toEqual(['C'])
   })
 
   it('leaves out a card that is filtered out', () => {

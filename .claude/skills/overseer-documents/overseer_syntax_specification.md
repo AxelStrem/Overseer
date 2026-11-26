@@ -615,8 +615,8 @@ Dragging a card to another spot writes both fields as one change: each field's `
 in it, one undo takes all of it back, and `mutable` is respected as for a board. Nothing moves in
 the list itself, so a filter, `narrows`, `sort_by` and `window` work on a canvas as on any list.
 
-An entry whose two fields still hold the template's values has no place yet. It waits in a strip
-above the area, one row that scrolls sideways, where it can be seen and picked up, and takes a place once dragged onto it. The
+An entry stands where its two fields say, the template's values included: a new entry is placed
+at the template's values, and several may stand piled there until they are dragged apart. The
 area grows to hold its farthest card and scrolls both ways, by touch too. A card is the entry
 drawn as anywhere else, as wide as its template's `width` says, or 220px.
 
@@ -627,7 +627,7 @@ its lines look: `line-color`, `line-style` (`solid`, `dashed` or `dotted`), and 
 for a relation one way, drawn with a head at the card named, or at both ends when the two cards
 name each other. A relation without an arrow is mutual, and is drawn once for a pair whichever
 side names it. Pointed at, a line says what joins the cards, with the field's label: "SEARCH needs
-TAGS". A key that names no entry, and a card with no place yet or filtered out, draw no line.
+TAGS". A key that names no entry, and a card filtered out, draw no line.
 Since the field can be a formula, any rule for which cards are joined is a field of the entry.
 
 ```overseer
