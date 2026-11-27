@@ -1963,7 +1963,8 @@ value or a formula, and that is all it ever says. A press sends the text along, 
 read it; nothing else does.
 
 A textbox that says `on change` is pressed by its own text: once what is typed is committed -
-Enter, or leaving the box - its actions run with the text sent along, as a button's would. A
+Enter, or leaving the box - its actions run with the text sent along, as a button's would. One
+that picks from a `vocabulary` is pressed by each pick, with what it holds then. A
 drawer's path box looks up the document's title that way, before anything is added:
 
 ```overseer

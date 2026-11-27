@@ -8947,14 +8947,25 @@ export class OverseerRenderer {
         // own chips and picker, with what is picked held here like anything typed. A form can
         // then offer tags the way every other place does, and they reach the new entry as the
         // text a set of tags is.
+        // A pick is what commits such a box, as Enter does a typed one, so a box that says
+        // `on change` is pressed by each pick and its actions read what was picked.
         if (!secret && this.getParameterValue(node, 'vocabulary')) {
-            return this.createTagsElement(node, {
+            const pressed = this.declaresEvent(node, 'change')
+            const picker = this.createTagsElement(node, {
                 read: () => {
                     const now = this._typed.get(key)
                     return now !== undefined ? now : (starting === null || starting === undefined ? '' : String(starting))
                 },
-                write: (text) => { this._typed.set(key, text); this.sayRefused(null, null) },
+                write: (text) => {
+                    this._typed.set(key, text)
+                    this.sayRefused(null, null)
+                    if (pressed) {
+                        this.emitEvent(node, picker, 'change')
+                            .catch((err) => console.warn('Action execution failed:', err))
+                    }
+                },
             })
+            return picker
         }
 
         if (this.getEffectiveMutableMode(node, container) === 'false') {
