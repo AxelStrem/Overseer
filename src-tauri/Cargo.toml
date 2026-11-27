@@ -1,6 +1,6 @@
 [package]
 name = "overseer"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 # The app. Naming it explicitly because the package also builds `overseer-server`, and
 # `cargo run` - which `tauri dev` uses - refuses to guess between two binaries.
