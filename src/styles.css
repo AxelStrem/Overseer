@@ -3332,6 +3332,56 @@ body.ov-backdrop-moving {
     cursor: default;
 }
 
+/* A selector's option, and a vote's, stand their control where the bullet would be. */
+.markdown-enabled li.ov-choice-item,
+.markdown-enabled li.ov-vote-item {
+    list-style: none;
+}
+
+.markdown-enabled .ov-choice {
+    margin: 0 6px 0 -20px;
+    vertical-align: -2px;
+    cursor: pointer;
+}
+
+.markdown-enabled .ov-choice:disabled {
+    cursor: default;
+}
+
+.markdown-enabled li.ov-choice-item.chosen > .ov-choice-text,
+.markdown-enabled li.ov-choice-item.chosen > p:first-child {
+    font-weight: 600;
+}
+
+.markdown-enabled .ov-vote {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 34px;
+    justify-content: center;
+    margin: 0 6px 0 -24px;
+    padding: 0 6px;
+    font: inherit;
+    font-size: 0.85em;
+    line-height: 1.5;
+    color: var(--ov-accent);
+    background: color-mix(in srgb, var(--ov-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ov-accent) 40%, transparent);
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.markdown-enabled .ov-vote:disabled {
+    cursor: default;
+    color: var(--ov-muted);
+    border-color: color-mix(in srgb, var(--ov-muted) 35%, transparent);
+    background: transparent;
+}
+
+.markdown-enabled .ov-vote:not(:disabled):hover {
+    background: color-mix(in srgb, var(--ov-accent) 20%, transparent);
+}
+
 /* A done task's words, and not the tasks nested under it. */
 .markdown-enabled li.ov-task-item.done > .ov-task-text,
 .markdown-enabled li.ov-task-item.done > p:first-child {

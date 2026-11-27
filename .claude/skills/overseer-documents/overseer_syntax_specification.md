@@ -2674,6 +2674,25 @@ writes the text as an edit of it would be - its `on change` runs, and one undo t
 a text that may be changed and holds what is drawn takes clicks, not a formula's result; anywhere
 else the boxes are drawn and cannot be clicked. A task written in code is text, and is no task.
 
+A list item that starts with `( )` or `(x)` is an option of a selector, drawn as a round button,
+and one that starts with `(+)` or `(+n)` an option of a vote, drawn as a button with its count -
+`(+)` counts none:
+
+```overseer
+text lunch (markdown=true, mutable=true) = "Where:
+- ( ) Pizza
+- (x) Noodles
+
+What next:
+- (+2) Hiking
+- (+) Cinema"
+```
+
+A click on a selector's option marks it `(x)` and clears every other option of the same list - an
+option of another list, or of a list nested in it, keeps its mark. A click on a vote's option adds
+one to its count, and nothing takes one back. Both rewrite only the lines they mark and write the
+text as a click on a task's box does, in the same texts; a list may mix options with plain items.
+
 #### Marks
 
 A `mark` is drawn and nothing more: it is unnamed, holds no value, and, like an unnamed `div`, is

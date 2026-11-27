@@ -695,8 +695,8 @@ export const withSoundAlt = (text, index, alt, file = null) => {
 }
 
 /// Every item of every list in `source`, in the order the page draws them - an item before the
-/// items nested in it - each with the line of the source its bullet is on, counted from 0. The
-/// items are found as markdown finds them, so a list written in code is never one; a control
+/// items nested in it - each with the line of the source its bullet is on, counted from 0, and the
+/// list token it is an item of. The items are found as markdown finds them, so a list written in code is never one; a control
 /// written into an item's text - a task's box, say - is found on its line.
 export const listItemLines = (source) => {
     const items = []
@@ -706,7 +706,7 @@ export const listItemLines = (source) => {
             if (token.type === 'list') {
                 let at = line
                 for (const item of token.items) {
-                    items.push({ item, line: at })
+                    items.push({ item, line: at, list: token })
                     walk(item.tokens, at)
                     at += linesIn(item.raw)
                 }
@@ -723,12 +723,19 @@ export const listItemLines = (source) => {
 /// `source` with its `line`-th line (counted from 0, as `listItemLines` counts) passed through
 /// `rewrite`, and every other line and line ending as it was - or null if there is no such line,
 /// or `rewrite` gives null for it.
-const withLineRewritten = (source, line, rewrite) => {
+const withLineRewritten = (source, line, rewrite) => withLinesRewritten(source, new Map([[line, rewrite]]))
+
+/// `source` with each line `rewrites` names (by its number, counted from 0) passed through the
+/// function it maps it to, and every other line and line ending as it was - or null if a line
+/// named is missing, or its function gives null for it.
+const withLinesRewritten = (source, rewrites) => {
     const parts = String(source ?? '').split(/(\r\n|\r|\n)/)
-    if (line < 0 || line * 2 >= parts.length) return null
-    const now = rewrite(parts[line * 2])
-    if (now === null || now === undefined) return null
-    parts[line * 2] = now
+    for (const [line, rewrite] of rewrites) {
+        if (line < 0 || line * 2 >= parts.length) return null
+        const now = rewrite(parts[line * 2])
+        if (now === null || now === undefined) return null
+        parts[line * 2] = now
+    }
     return parts.join('')
 }
 
@@ -743,6 +750,59 @@ export const withTaskTicked = (text, index, ticked) => {
     if (!task) return null
     return withLineRewritten(text, task.line, (line) =>
         TASK_BOX.test(line) ? line.replace(TASK_BOX, (_, lead) => `${lead}[${ticked ? 'x' : ' '}]`) : null)
+}
+
+/// An option of a selector, `( )` or `(x)`, and one of a vote, `(+)` or `(+n)`, as written at the
+/// start of its line after any quote marks and its bullet, with a space or the line's end after.
+const CHOICE_MARK = /^((?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\(([ xX])\)(?=[ \t]|$)/
+const VOTE_MARK = /^((?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\(\+(\d*)\)(?=[ \t]|$)/
+
+/// The list items of `source` whose lines start with `mark`, in the order they are drawn. A task
+/// is none of them, whatever follows its box.
+const markedItems = (source, mark) => {
+    const lines = String(source ?? '').split(/\r\n|\r|\n/)
+    return listItemLines(source).filter(({ item, line }) => !item.task && mark.test(lines[line] ?? ''))
+}
+
+/// `text` with its `index`-th selector option (counted from 0 over the whole text, as they are
+/// drawn) chosen, `(x)`, and every other option of the same list cleared, `( )`. An option of
+/// another list, or of a list nested in this one, is left as it was. Null if there is no such
+/// option.
+export const withChoiceMade = (text, index) => {
+    const options = markedItems(text, CHOICE_MARK)
+    const chosen = options[index]
+    if (!chosen) return null
+    const rewrites = new Map()
+    for (const option of options) {
+        if (option.list !== chosen.list) continue
+        const mark = option === chosen ? 'x' : ' '
+        rewrites.set(option.line, (line) => line.replace(CHOICE_MARK, (_, lead) => `${lead}(${mark})`))
+    }
+    return withLinesRewritten(text, rewrites)
+}
+
+/// `text` with one more vote for its `index`-th vote option (counted from 0 over the whole text,
+/// as they are drawn): `(+)` counts none, and becomes `(+1)`. Null if there is no such option.
+export const withVoteAdded = (text, index) => {
+    const option = markedItems(text, VOTE_MARK)[index]
+    if (!option) return null
+    return withLineRewritten(text, option.line, (line) =>
+        line.replace(VOTE_MARK, (_, lead, count) => `${lead}(+${(Number(count) || 0) + 1})`))
+}
+
+/// An option's mark at the start of its drawn words - after the `<p>` of a loose list's item.
+const DRAWN_CHOICE = /^(<p>)?\(([ xX])\)(?:[ \t]+|(?=<|\n|$))/
+const DRAWN_VOTE = /^(<p>)?\(\+(\d*)\)(?:[ \t]+|(?=<|\n|$))/
+
+/// A list item's drawn body with `control` in place of its mark: in a tight item its words are
+/// wrapped in a span with the class given, up to the first block - a list nested in it, say.
+const drawnWithControl = (text, found, control, wordsClass) => {
+    const rest = text.slice(found[0].length)
+    if (found[1]) return `<p>${control}${rest}`
+    const block = rest.search(TASK_BODY_BLOCK)
+    const words = block < 0 ? rest : rest.slice(0, block)
+    const after = block < 0 ? '' : rest.slice(block)
+    return `${control}<span class="${wordsClass}">${words}</span>${after}`
 }
 
 /// How many tasks the text being drawn has drawn so far: each box carries its number, which
@@ -995,11 +1055,25 @@ const markdown = new Marked({
             return `<code>${writtenInCode(text)}</code>`
         },
         // A task's box is drawn shut: a text that may be changed opens its boxes once drawn
-        // (see `wakeTasks`), and a click rewrites the text rather than ticking the box.
+        // (see `wakeControls`), and a click rewrites the text rather than ticking the box.
         checkbox(checked) {
             return `<input type="checkbox" class="ov-task" data-task-index="${tasksDrawn++}" aria-label="Done"${checked ? ' checked' : ''} disabled>`
         },
         listitem(text, task, checked) {
+            // A selector's option and a vote's are numbered once the whole text is drawn (see
+            // `wakeControls`): this runs on an item after the items nested in it.
+            const choice = task ? null : DRAWN_CHOICE.exec(text)
+            if (choice) {
+                const chosen = choice[2] !== ' '
+                const radio = `<input type="radio" class="ov-choice" aria-label="Choose"${chosen ? ' checked' : ''} disabled> `
+                return `<li class="ov-choice-item${chosen ? ' chosen' : ''}">${drawnWithControl(text, choice, radio, 'ov-choice-text')}</li>\n`
+            }
+            const vote = task ? null : DRAWN_VOTE.exec(text)
+            if (vote) {
+                const count = Number(vote[2]) || 0
+                const button = `<button type="button" class="ov-vote" aria-label="Vote" disabled>+<span class="ov-vote-count">${count}</span></button> `
+                return `<li class="ov-vote-item">${drawnWithControl(text, vote, button, 'ov-vote-text')}</li>\n`
+            }
             if (!task) return `<li>${text}</li>\n`
             const done = checked ? ' done' : ''
             // A tight item's words follow its box directly; a loose one's are its first paragraph.
@@ -7035,14 +7109,16 @@ export class OverseerRenderer {
         if (tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable) return true
         if (tag === 'A') return el.hasAttribute('href')
         if (tag === 'INPUT') {
-            // A task's box in a text keeps its press when it can be ticked.
-            if (el.classList && el.classList.contains('ov-task')) return !el.disabled
+            // A task's box or a selector's option in a text keeps its press when it can be clicked.
+            if (el.classList && (el.classList.contains('ov-task') || el.classList.contains('ov-choice'))) return !el.disabled
             // A field's checkbox is decided by its field, which knows whether it can change.
             if (el.type === 'checkbox' && el.parentElement && el.parentElement.closest('.overseer-field')) return false
             return !el.disabled
         }
         if (tag === 'BUTTON') {
             if (el.disabled) return false
+            // A vote's option in a text is drawn by no node of its own.
+            if (el.classList.contains('ov-vote')) return true
             // A document's button with nothing to do is as inert as a label.
             const declared = this.nodeDrawnBy(el)
             return declared ? (this.declaresEvent(declared, 'click') || this.declaresEvent(declared, 'hold')) : true
@@ -8769,7 +8845,7 @@ export class OverseerRenderer {
             // Use markdown rendering
             value.innerHTML = this.renderMarkdown(textContent, node)
             value.classList.add('markdown-enabled')
-            this.wakeTasks(value, node)
+            this.wakeControls(value, node)
         } else {
             // Plain text with line breaks preserved
             this.setTextWithIcons(value, textContent, node)
@@ -8781,17 +8857,20 @@ export class OverseerRenderer {
             if (player) this.askForTranscription(value, node, player, Boolean(e.detail && e.detail.wanted))
         })
 
-        // A task's box is the box's alone: the press does not reach the entry the text is in.
+        // A task's box, or a selector's or a vote's option, is the control's alone: the press does
+        // not reach the entry the text is in.
         value.addEventListener('click', (e) => {
-            const box = e.target && e.target.closest ? e.target.closest('.ov-task') : null
-            if (!box || !value.contains(box)) return
+            const control = e.target && e.target.closest ? e.target.closest('.ov-task, .ov-choice, .ov-vote') : null
+            if (!control || !value.contains(control)) return
             e.preventDefault()
             e.stopPropagation()
-            if (!box.disabled) this.tickTask(value, node, box)
+            if (!control.disabled) this.pressTextControl(value, node, control)
         })
 
         // Make it editable on double-click (respect mutable)
-        value.addEventListener('dblclick', () => {
+        value.addEventListener('dblclick', (e) => {
+            // Two quick clicks on a vote are two votes, not a wish to edit the text.
+            if (e && e.target && e.target.closest && e.target.closest('.ov-task, .ov-choice, .ov-vote')) return
             const mode = this.getEffectiveMutableMode(node, value)
             if (mode === 'false') return
             if (this.passesItsTapsOn(value, node)) return
@@ -13486,7 +13565,7 @@ export class OverseerRenderer {
                     const asText = (newValue == null) ? '' : String(newValue)
                     if (element.classList && element.classList.contains('markdown-enabled')) {
                         element.innerHTML = this.renderMarkdown(asText, node)
-                        this.wakeTasks(element, node)
+                        this.wakeControls(element, node)
                     } else {
                         this.setTextWithIcons(element, asText, node)
                     }
@@ -14497,7 +14576,7 @@ export class OverseerRenderer {
                 const newValue = textarea.value
                 // Update the element with rendered markdown
                 element.innerHTML = this.renderMarkdown(newValue, node)
-                this.wakeTasks(element, node)
+                this.wakeControls(element, node)
                 
                 await this.writeMarkdownText(element, node, newValue, () => {
                     element.style.display = displayBefore
@@ -14561,23 +14640,35 @@ export class OverseerRenderer {
         const now = rewrite(was)
         if (now === null || now === undefined || now === was) return null
         element.innerHTML = this.renderMarkdown(now, target)
-        this.wakeTasks(element, target)
+        this.wakeControls(element, target)
         return this.writeMarkdownText(element, target, now)
     }
 
-    /// Opens the task boxes of the markdown drawn in `element` where a click may tick them - see
-    /// `rewritableText`. They are drawn shut, so a text that cannot be changed keeps them so.
-    wakeTasks(element, node) {
-        if (!element || !element.querySelector || !element.querySelector('.ov-task')) return
+    /// Opens the controls of the markdown drawn in `element` - task boxes, selectors' and votes'
+    /// options - where a click may rewrite the text: see `rewritableText`. They are drawn shut, so
+    /// a text that cannot be changed keeps them so. Options are numbered here, in the order they
+    /// stand, which is the order `withChoiceMade` and `withVoteAdded` count them in.
+    wakeControls(element, node) {
+        if (!element || !element.querySelector) return
+        const controls = element.querySelectorAll('.ov-task, .ov-choice, .ov-vote')
+        if (!controls.length) return
+        element.querySelectorAll('.ov-choice').forEach((option, i) => { option.dataset.choiceIndex = String(i) })
+        element.querySelectorAll('.ov-vote').forEach((option, i) => { option.dataset.voteIndex = String(i) })
         const open = !!this.rewritableText(element, node)
-        for (const box of element.querySelectorAll('.ov-task')) box.disabled = !open
+        for (const control of controls) control.disabled = !open
     }
 
-    /// A click on a task's box in the text drawn in `element`: the box does not tick itself - the
-    /// text's line for it is rewritten, and the text drawn again from what it then says.
-    tickTask(element, node, box) {
-        return this.rewriteDrawnText(element, node, (was) =>
-            withTaskTicked(was, Number(box.dataset.taskIndex), !box.hasAttribute('checked')))
+    /// A click on a control drawn in the markdown of `element` - a task's box, a selector's or a
+    /// vote's option: the control does not change itself - the text's line for it is rewritten,
+    /// and the text drawn again from what it then says.
+    pressTextControl(element, node, control) {
+        const list = control.classList
+        return this.rewriteDrawnText(element, node, (was) => {
+            if (list.contains('ov-task')) return withTaskTicked(was, Number(control.dataset.taskIndex), !control.hasAttribute('checked'))
+            if (list.contains('ov-choice')) return withChoiceMade(was, Number(control.dataset.choiceIndex))
+            if (list.contains('ov-vote')) return withVoteAdded(was, Number(control.dataset.voteIndex))
+            return null
+        })
     }
 
     /// Writes a markdown text's new value: into the document, and then through its `on change`
@@ -16049,7 +16140,7 @@ try {
             const html = this.renderMarkdown(String(computedValue ?? ''), newNode)
             if (textElement.innerHTML !== html) {
                 textElement.innerHTML = html
-                this.wakeTasks(textElement, newNode)
+                this.wakeControls(textElement, newNode)
                 if (DEBUG_MODE) console.log('📝 Updated markdown element')
             }
         } else {
