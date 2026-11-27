@@ -4108,22 +4108,39 @@ body.ov-backdrop-moving {
     flex-basis: 100%;
     width: 100%;
     grid-column: 1 / -1;
+    box-sizing: border-box;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
     padding: 2px 6px;
     font-size: 11px;
     font-style: italic;
+}
+
+.overseer-entries-left-out-count {
     opacity: 0.55;
 }
 
-/* Asking for more reads as a link in the footnote, not as a button competing with the list's own. */
+/* Asking for more is a small, quiet button, so that it reads as something to press; it keeps its
+   words on one line however narrow the list is. */
 .overseer-show-more {
-    margin-left: 8px;
-    padding: 0;
-    border: none;
-    background: none;
+    flex: none;
+    white-space: nowrap;
+    padding: 1px 8px;
+    border: 1px solid var(--ov-line);
+    border-radius: var(--ov-radius);
+    background: transparent;
     color: inherit;
     font: inherit;
-    text-decoration: underline;
+    font-style: normal;
+    opacity: 0.8;
     cursor: pointer;
+}
+
+.overseer-show-more:hover:not(:disabled) {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
 .overseer-show-more:disabled {

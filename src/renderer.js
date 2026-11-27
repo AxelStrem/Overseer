@@ -4525,6 +4525,9 @@ export class OverseerRenderer {
 
         for (const row of Array.from(list.children)) {
             if (row.classList.contains('table-header')) continue
+            // The note under a windowed list is no entry: made a row, its words and its button
+            // would each be squeezed into one of the table's columns.
+            if (row.classList.contains('overseer-entries-left-out')) continue
             row.classList.add('table-row')
             row.classList.remove('layout-horizontal', 'layout-vertical', 'layout-flow')
             // A horizontal row centres its children on the line and lets them be as tall as they

@@ -149,4 +149,30 @@ describe('a list showing part of itself', () => {
     app.renderer.renderDocument(app.currentDocument)
     expect(document.querySelectorAll('.overseer-entries-left-out').length).toBe(1)
   })
+  it('keeps the note under a table out of the table rows, even when the table is set up again', () => {
+    // Made a row, the note became a subgrid of the table's columns, and its "show 20 more" was
+    // squeezed into one narrow column, a word to a line.
+    const app = render([inView(12), inView(13), outOfView(3)],
+      {
+        view: { String: 'table' },
+        _columns: { String: JSON.stringify([{ name: 'date', label: 'date', width: '1fr', span: false }]) },
+        _left_out_of_view: { Integer: 40 },
+      })
+    const list = document.querySelector('.overseer-list')
+    app.renderer.setUpTable(list, app.currentDocument[0].children[0])
+    const note = list.querySelector(':scope > .overseer-entries-left-out')
+    expect(note).not.toBeNull()
+    expect(note.classList.contains('table-row')).toBe(false)
+    expect(list.querySelectorAll(':scope > .table-row').length).toBe(2)
+  })
+
+  it('keeps the note and its show-more button on one line', () => {
+    const styles = readFileSync('src/styles.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const note = styles.match(/\.overseer-entries-left-out\s*\{([^}]*)\}/)
+    expect(note[1]).toMatch(/display:\s*flex/)
+    const button = styles.match(/\.overseer-show-more\s*\{([^}]*)\}/)
+    expect(button, 'the button has no rule at all').not.toBeNull()
+    expect(button[1]).toMatch(/white-space:\s*nowrap/)
+    expect(button[1]).toMatch(/flex:\s*none/)
+  })
 })
