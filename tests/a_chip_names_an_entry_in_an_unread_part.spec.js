@@ -3,7 +3,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // A list with parts not read holds only its newest entries, and the server puts what a chip is
 // drawn from for the rest on the list. A `<#key>` naming one of those draws its name, colour and
 // title as any other would. The entry is not in the page, so a press on its chip asks the server
-// to read the list back as far as that key, then shows the entry the answer holds.
+// to read the list back as far as that key, then shows the entry the answer holds. An entry the
+// page holds but the window leaves out writes only what differs from its template, and the
+// server puts a record for it beside the rest.
 
 function setupDOM() {
   document.body.innerHTML = `
@@ -36,10 +38,16 @@ const finished = (handle, title) => Object.assign(base(`[${handle}]`, 'div'), {
   children: [valued('handle', 'string', handle), valued('title', 'string', title)],
 })
 
+const leftOut = (handle) => Object.assign(base(`[${handle}]`, 'div'), {
+  parameters: { _out_of_view: { Boolean: true } },
+  children: [valued('handle', 'string', handle)],
+})
+
 const UNREAD = [
   { key: 'old', title: 'An old one', colour: '#1d4ed8' },
   { key: 'new', title: 'Not what the page holds' },
   { key: 'bare' },
+  { key: 'leftout', title: 'Left out of view', colour: '#9f1239' },
 ]
 
 const doc = (note, read = []) => ([
@@ -58,7 +66,7 @@ const doc = (note, read = []) => ([
             _parts_vocabulary: { String: JSON.stringify(UNREAD) },
           }),
         },
-        children: [...read, finished('new', 'Drawn this week')],
+        children: [...read, finished('new', 'Drawn this week'), leftOut('leftout')],
       }),
     ],
   }),
@@ -134,5 +142,13 @@ describe('a chip naming an entry in a part not read', () => {
     const [chip] = noteChips()
     expect(chip.textContent).toBe('bare')
     expect(chip.classList.contains('tag-unknown')).toBe(false)
+  })
+
+  it('draws an entry the window leaves out from its record, not as its bare key', () => {
+    render('and <#leftout>')
+    const [chip] = noteChips()
+    expect(chip.textContent).toBe('leftout')
+    expect(chip.title).toBe('Left out of view')
+    expect(chip.style.backgroundColor).toBe('rgb(159, 18, 57)')
   })
 })

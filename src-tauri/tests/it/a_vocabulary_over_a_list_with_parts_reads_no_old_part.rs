@@ -95,12 +95,16 @@ impl Drop for Sandbox {
 }
 
 fn sandbox(tag: &str, document: &str) -> (Sandbox, DocumentRoot) {
+    sandbox_with(tag, document, THIS_WEEK)
+}
+
+fn sandbox_with(tag: &str, document: &str, this_week: &str) -> (Sandbox, DocumentRoot) {
     let root = std::env::temp_dir().join(format!("overseer_sumvocab_{}_{}", tag, std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("log.parts/History")).unwrap();
     std::fs::write(root.join("log.os"), document).unwrap();
     std::fs::write(root.join("log.parts/History/2026-W43.os"), OLDER).unwrap();
-    std::fs::write(root.join("log.parts/History/2026-W45.os"), THIS_WEEK).unwrap();
+    std::fs::write(root.join("log.parts/History/2026-W45.os"), this_week).unwrap();
     overseer::app_api::forget_baseline();
     overseer::app_api::forget_dependencies();
     overseer::viewstate::forget_all();
@@ -143,6 +147,40 @@ fn a_vocabulary_is_given_the_entries_of_the_parts_not_read() {
     let nodes = again.open("log.os").expect("open again");
     assert_eq!(held(&nodes), 1);
     assert_eq!(overseer::partsums::summaries_made(), made, "no part was summarised again");
+}
+
+#[test]
+fn an_entry_the_window_leaves_out_of_a_part_read_is_given_a_record_too() {
+    let _guard = serial();
+    let this_week = r#"list History {
+    - {
+        - handle = "b"
+        - title = "This week's"
+        - done_at = "2026-11-04T08:00:00Z"
+    }
+    - {
+        - handle = "d"
+        - status = "cancelled"
+    }
+}
+"#;
+    let (_sandbox, documents) = sandbox_with("leftout", &host("= \"\""), this_week);
+    let nodes = documents.open("log.os").expect("open");
+    assert_eq!(held(&nodes), 2, "only this week is read");
+    let left_out = overseer::addressing::find(&nodes, "log/History/[d]").expect("the entry");
+    assert!(overseer::resolver::out_of_view(left_out), "the window leaves it out");
+    let Some(OverseerValue::String(records)) = said(&nodes, "_parts_vocabulary") else {
+        panic!("no vocabulary on the list: {:?}", said(&nodes, "_parts_vocabulary"));
+    };
+    let records: serde_json::Value = serde_json::from_str(&records).unwrap();
+    assert_eq!(
+        records,
+        serde_json::json!([
+            {"key": "d", "colour": "#9f1239", "shape": "ticket"},
+            {"key": "a", "title": "The oldest", "colour": "#15803d", "shape": "ticket"},
+            {"key": "c", "colour": "#9f1239", "shape": "ticket"},
+        ])
+    );
 }
 
 #[test]
