@@ -1458,7 +1458,7 @@ impl FileOperations {
                         output.push_str("- ");
                         output.push_str(&node.name);
                         output.push_str(" = ");
-                        output.push_str(&Self::serialize_value(val));
+                        output.push_str(&Self::serialize_value_with_node(node, val));
                         output.push('\n');
                         Self::emit_trailing_trivia_if_allowed(node, &snapshot, output);
                         return Ok(());
@@ -3591,6 +3591,17 @@ impl FileOperations {
         out
     }
 
+    /// A string as `escape_string` writes it, but for its line breaks, which stay line breaks.
+    ///
+    /// For a value the document already held over several lines: the one-line form is there so
+    /// that text nobody wrote by hand cannot spill over the lines around it, and a person who
+    /// wrote a note over several lines wrote it to be read that way. The parser reads a line
+    /// break inside quotes as itself, so only what would end the string or read as an escape -
+    /// `"`, `\\`, and the invisible `\r` and `\t` - is escaped.
+    fn escape_string_keeping_lines(s: &str) -> String {
+        s.split('\n').map(Self::escape_string).collect::<Vec<_>>().join("\n")
+    }
+
     pub(crate) fn serialize_value(value: &OverseerValue) -> String {
         match value {
             OverseerValue::Null => "null".to_string(),
@@ -3712,6 +3723,17 @@ impl FileOperations {
                     return format!("\"{}\"", d);
                 }
                 _ => { /* fall through */ }
+            }
+        }
+        // A string written over several lines is written back over several lines.
+        if let OverseerValue::String(s) = value {
+            let written_multi_line = node
+                .source_snapshot
+                .as_ref()
+                .and_then(|snap| snap.body.value.as_ref())
+                .is_some_and(|slice| slice.text.starts_with('"') && slice.text.contains('\n'));
+            if written_multi_line {
+                return format!("\"{}\"", Self::escape_string_keeping_lines(s));
             }
         }
         // Default behavior

@@ -98,6 +98,7 @@ mod a_mark_is_kept_and_not_addressed;
 mod a_minus_before_a_value_negates_it;
 mod a_mounted_calendar_reads_a_day_nobody_wrote_as_its_template;
 mod a_mounted_node_is_worked_out_in_its_own_document;
+mod a_multi_line_text_stays_multi_line_when_changed;
 mod a_mount_takes_the_place_of_the_template_node_it_matches;
 mod a_move_can_set_a_field_of_the_entry_it_moves;
 mod a_move_or_a_sort_reaches_the_file;

@@ -116,6 +116,15 @@ number 1000. A float that is not whole stays one in an `int` field, as written. 
 writes into a document is written so that it reads back the same: `1e20` and `1e-9` with an
 exponent, infinity as `inf`.
 
+#### Strings
+
+A string is written in double quotes, and may run over several lines: a line break inside the
+quotes is part of the value. `\"`, `\\`, `\n`, `\t` and `\r` stand for a quote, a backslash, a
+line break, a tab and a carriage return. When a string changes, it is written back the way it
+was written: a value written over several lines keeps its line breaks as lines, escaping only the
+rest, and any other - one written on one line, or one the document did not hold before, as in an
+entry an `append` adds - is written on one line, its line breaks as `\n`.
+
 `view="progress"` draws an `int` or a `float` as a bar, filled as far as its value goes: full at
 `limit=`, which is `1` for a float - a share - and `100` for an int - a percentage. A value
 outside 0 to the limit is drawn at the nearer end. The bar is the theme's `accent` on its `line`,
