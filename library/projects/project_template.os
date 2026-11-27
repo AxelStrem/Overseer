@@ -715,7 +715,7 @@ tab project (label=$(name), mutable=true) {
             }
         }
 
-        div Feature (layout="vertical", width=260px, margin=0, spacing=2, padding=8, border-radius=10px,
+        div Feature (layout="vertical", width=fit-content, min-width=260px, max-width=420px, margin=0, spacing=2, padding=8, border-radius=10px,
                      background-color=$(colour + "1a"),
                      shadow=$("inset 0 3px 0 " + colour + ", 0 4px 12px -6px " + colour)) {
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"

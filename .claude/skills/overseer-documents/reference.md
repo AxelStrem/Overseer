@@ -29,7 +29,7 @@ is right. The section names below are the specification's, for reading further.
   `hover-text`, `icon`, `foldable`, `folded`, `markdown`.
 - **Values**: `precision`, `format="trim"`, `prefix`, `suffix`, `limit`, `color`, `view`.
 - **Layout**: `layout` (`vertical`, `horizontal`, `flow`), `spacing`, `margin*`, `alignment`,
-  `width`, `height`, `min-width`, `overflow`.
+  `width`, `height`, `min-width`, `max-width`, `overflow`.
 - **Style**: `background-color`, `font-size`, `font-weight`, `font-color`, `border-style`,
   `border-radius`, `shadow`, `hide-labels`.
 - **Lists**: `entry`, `key`, `view` (`table`, `board`, `canvas`), `sort_by`, `window`, `parts`,

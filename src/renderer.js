@@ -10871,7 +10871,18 @@ export class OverseerRenderer {
         // One as wide as its content is placed where an aligning parent says, not stretched (see
         // `.fits-content` in styles.css).
         element.classList.toggle('fits-content', widthCss === 'fit-content')
-        
+
+        // Limits on the width: with `width=fit-content` a card grows with what it holds between
+        // the two. On a `flow` container `min-width` is how narrow its columns may get, not a
+        // size of its own (see `applyFlowColumns`), so it is left off the container there.
+        const maxWidth = params['max-width'] !== undefined && params['max-width'] !== null
+            ? this.convertCssSizeValue(this.getParameterValue(node, 'max-width')) : ''
+        element.style.maxWidth = maxWidth || ''
+        const minWidth = params['min-width'] !== undefined && params['min-width'] !== null &&
+            this.getEffectiveLayout(node) !== 'flow'
+            ? this.convertCssSizeValue(this.getParameterValue(node, 'min-width')) : ''
+        element.style.minWidth = minWidth || ''
+
         // Height parameter. A height in parts is a share of what a column has left once its other
         // children are drawn, as a width in parts is of a row's; at the top of a document the
         // column is the window (see `.takes-height-parts`).

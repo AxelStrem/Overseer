@@ -3040,7 +3040,9 @@ div Element (margin-top=5, margin-bottom=15, margin-left=0, margin-right=20) {
 
 `layout` is `vertical` unless it says `horizontal`, `flow`, `inherit` or `opposite`. `flow` fits as
 many equal columns as there is room for and wraps the rest - three cards across on a wide window,
-one on a narrow one - with `min-width` saying how narrow a column may get. `alignment` places the
+one on a narrow one - with `min-width` saying how narrow a column may get. On any other node
+`min-width` and `max-width` are the narrowest and widest it may be drawn: with `width=fit-content`
+a card grows with what it holds between the two, and its text wraps once it reaches the widest. `alignment` places the
 children across the way they run: `near`, `center` or `far`. On a field in a list drawn as a
 table it places the value across its cell - text, figure or chips - and the column's heading with
 it: `enum stage (alignment="center")` is a column of centred chips under a centred name. `shadow` is `soft`, `lifted`,
@@ -3049,6 +3051,7 @@ it: `enum stage (alignment="center")` is a column of centred chips under a centr
 ```overseer
 list Ideas (entry=<Card>, layout="flow", min-width=260px) { }
 div Card (layout="horizontal", alignment="center", shadow="soft") { }
+div Note (width=fit-content, min-width=200px, max-width=360px) { }
 ```
 
 `motion` moves a node, by name: `pop` (it grows a little and settles back), `shake`, `fade` (it
@@ -3563,7 +3566,7 @@ div Tasks {
 
 ## Reserved Keywords
 
-- **Layout**: `layout` (`vertical`, `horizontal`, `flow`, `inherit`, `opposite`), `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`, `alignment`, `min-width`
+- **Layout**: `layout` (`vertical`, `horizontal`, `flow`, `inherit`, `opposite`), `spacing`, `margin`, `margin-top`, `margin-bottom`, `margin-left`, `margin-right`, `alignment`, `min-width`, `max-width`
 - **Styling**: `background-color`, `font-size`, `font-weight`, `font-color`, `hide-labels`, `hover-text`, `width`, `height`, `overflow`, `overflow-x`, `overflow-y`, `shadow`, `motion`, `ease`, `value-padding`
 - **Borders**: `border-style`, `border-top`, `border-bottom`, `border-left`, `border-right`, `border-radius`
 - **Marks**: `type` (on a `mark`: `grip`, `separator`)
