@@ -61,6 +61,9 @@ Where the files go:
 - **The binary alone**: also give `--frontend` (the release's `overseer-page-<tag>.zip`, unpacked)
   and `--bind 0.0.0.0`. On Linux, set `MALLOC_ARENA_MAX=2`; the image already does.
 
+Behind a reverse proxy, it must pass `X-Forwarded-Proto` and not buffer `/v1/watch` (section 8,
+items 13 and 14).
+
 Memory (`OVERSEER_CACHE_MB`, `OVERSEER_IDLE_MINUTES`) can stay at the defaults until the
 `memory` lines in the log say otherwise. Use a release, not a branch: the image
 `ghcr.io/axelstrem/overseer:<version>`, or a release's binary. AgentLoop checks the project
@@ -131,7 +134,8 @@ the person's, and they see only what is shared with them.
 4. **Share with it**, in the person's `sharing.os`, for each project:
    - the tracker, `projects/<name>.os`, with `edit`;
    - its definition, `projects/<name>.project.os`, with `read`;
-   - any tracker it files into.
+   - any tracker it files into, which includes another project's tracker when an item is filed
+     there with `tracker.py file --into <project>` (named `<project>:<handle>`).
 
    A group is easier once there are several agent accounts:
    `- { - name = "agents"  - members = "<user>-agents" }`, with the shares made `with = "agents"`.
@@ -214,7 +218,8 @@ Each item says how to check it and how to fix it.
    - Symptom: AgentLoop's `tracker.py` stops at `no list History`.
 8. **Sharing reaches the agents.**
    - Check: `GET /documents` with the agents' key lists each tracker it works and that tracker's
-     definition.
+     definition, and also every other project's tracker its items are filed into. Find those in
+     the trackers' conversations, or ask the person which projects hand work to each other.
    - Symptom: a missing definition still draws the tracker, but a loop finds no repositories. A
      missing tracker gives `404`.
    - Fix: entries in the owner's `sharing.os`; `GET /account/sharing` shows what each entry
@@ -235,6 +240,42 @@ Each item says how to check it and how to fix it.
     - Check: `TZ` is set.
     - Symptom: dates near midnight land on the wrong day, and calendars and "today" are off by
       the server's offset.
+13. **HTTPS reaches the server as HTTPS.**
+    - Check: sign in over the public address and read the `Set-Cookie` header of the answer
+      (the browser's network tab, or `curl -si` with the form's fields). It should end in `; Secure`.
+    - Symptom: the sign-in cookie is sent without `Secure`. The server marks it so only when the
+      proxy sends `X-Forwarded-Proto: https`; it sees plain HTTP from the proxy otherwise.
+    - Fix: have the reverse proxy (nginx, Caddy, Traefik, Unraid's) set that header. Railway's
+      proxy already does.
+14. **The proxy passes `/v1/watch` through unbuffered.** It is a stream of server-sent events
+    (API.md, "Watching").
+    - Check: `curl -N -H "$A" "$B/v1/watch?document=<doc>"` over the public address prints the
+      first `event: changed` at once, and stays open.
+    - Symptom: a proxy that buffers the stream or closes it after a timeout leaves pages unaware
+      of others' edits, and of an agent's, until they are reloaded.
+    - Fix: turn off response buffering for that route (`proxy_buffering off` in nginx) and raise
+      the read timeout.
+15. **Backups.**
+    - Check: that the documents folder and the accounts file are both backed up, and where.
+    - Symptom: none until it's needed. Lost documents are lost for good; a lost accounts file
+      means everyone's accounts, passwords, keys and sessions; the documents stay, but nobody can
+      sign in to them.
+    - Fix: back them up separately, as they're kept apart: the accounts file holds password
+      hashes and keys and need not travel with the documents. The cache
+      (`OVERSEER_DISK_CACHE`) needs none; the server makes it again.
+16. **The image's user can write.**
+    - Check: `PUID` is not `0`, and the folders mounted at `/data`, `/config` and `/cache` can be
+      written by `PUID:PGID` (`99:100` by default). Started as root, the entrypoint gives those
+      folders to that user, and stops if it can't (a read-only mount); started with `--user`, it
+      changes nothing, and the folders must already belong to that user.
+    - Symptom: with `PUID=0` the container stops at once, saying
+      `PUID=0 would run the server as root; give another id`. With a folder it can't write, the
+      server stops at start with
+      `cannot use the accounts that <setting> names: the directory of people could not be written: permission denied`
+      (`people.os` goes in the documents folder), or saves fail with
+      `could not replace '<document>': ...`, or an account change fails with
+      `the accounts could not be written: permission denied`.
+    - Fix: give the folders to that user on the host, or set `PUID`/`PGID` to the folders' owner.
 
 Say what you found item by item. Don't fix anything that writes to someone's documents without
 asking, and never write `people.os`.
