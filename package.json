@@ -1,6 +1,6 @@
 {
   "name": "overseer-frontend",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Frontend for Overseer personal data management app",
   "main": "index.js",
   "scripts": {
