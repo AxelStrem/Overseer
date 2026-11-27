@@ -392,6 +392,8 @@ entry it adds up - and the list still draws its window.
 A reader can ask for more: the note under the list offers one window more each time it is
 pressed. That is kept for the reader alone, as long as they are looking - the file, every other
 page and the bot still see the window the document states, and nothing is written or taken back.
+A chip naming an entry the list does not draw asks for that entry alone, kept in view for the
+reader the same way.
 
 #### Keeping a list in parts
 

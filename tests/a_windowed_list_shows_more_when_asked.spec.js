@@ -98,6 +98,48 @@ describe('a windowed list shows more when asked', () => {
     expect(ask()).toBeNull()
   })
 
+  it('draws no answer over what the page took meanwhile, and catches up instead', async () => {
+    const app = render(docOf([inView(1), inView(2), inView(3), outOfView(4)], 1))
+    let answer
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'show_more_of_overseer_list') return new Promise((resolve) => { answer = resolve })
+      if (cmd === 'catch_up_overseer_document') return Promise.resolve(null)
+      return Promise.resolve(null)
+    })
+    const asking = app.showMoreOf(['t', 'Days'], '2026-08-04')
+    // An edit's answer lands while the list is being read back.
+    app._currentText = 'TEXT AFTER AN EDIT'
+    answer({ text: 'TEXT', version: 'v', changes: null, nodes: docOf([inView(1), inView(2), inView(3), inView(4)]) })
+    expect(await asking).toBe(false)
+    expect(dates()).toEqual(['2026-09-01', '2026-09-02', '2026-09-03'])
+    const caught = invoke.mock.calls.filter(([cmd]) => cmd === 'catch_up_overseer_document')
+    expect(caught.length).toBe(1)
+    expect(caught[0][1].path).toBe('p.os')
+  })
+
+  it('reads back once for a chip pressed twice, and says so on the chip meanwhile', async () => {
+    const app = render(docOf([inView(1), inView(2), inView(3)]))
+    const within = document.createElement('div')
+    document.body.appendChild(within)
+    const chip = document.createElement('span')
+    chip.className = 'tag-chip chip-reveals'
+    chip.dataset.reach = JSON.stringify({ list: ['t', 'History'], key: 'w42' })
+    within.appendChild(chip)
+    app.renderer.watchForChipPresses(within)
+    vi.spyOn(app.renderer, 'canReadBackTo').mockReturnValue(true)
+    let done
+    const readBackTo = vi.spyOn(app.renderer, 'readBackTo').mockImplementation(() => new Promise((resolve) => { done = resolve }))
+    chip.click()
+    chip.click()
+    expect(readBackTo).toHaveBeenCalledTimes(1)
+    expect(chip.classList.contains('chip-reading-back')).toBe(true)
+    expect(document.getElementById('status-message').textContent).toBe('w42: reading back to it')
+    done(null)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(chip.classList.contains('chip-reading-back')).toBe(false)
+  })
+
   it('presses through to the list it is under', () => {
     const app = render(docOf([inView(1), inView(2), inView(3), outOfView(4)], 1))
     const showMoreOf = vi.spyOn(app, 'showMoreOf').mockResolvedValue(undefined)

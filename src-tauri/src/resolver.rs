@@ -188,6 +188,7 @@ fn window_the_list(node: &mut OverseerNode, root: &[OverseerNode], trail: &mut V
     // One window more for each time this reader asked - see `reading_more`.
     let asked = asked_for_more(&address);
     let wanted = window.saturating_mul(1 + asked);
+    let revealed = revealed_in(&address);
     // A list with parts read whole has every entry worked out, though it draws its window: what
     // reads it whole reaches every entry, and finding that out by working the document out would
     // work it out twice.
@@ -196,7 +197,7 @@ fn window_the_list(node: &mut OverseerNode, root: &[OverseerNode], trail: &mut V
         let mut named = None;
         let reading = parts_wanted(node, &address, wanted, root, &mut named);
         work_out_all = reading.is_none();
-        crate::parts::bring_in(node, &address, reading);
+        crate::parts::bring_in(node, &address, reading, &revealed);
         match named {
             Some(what) => {
                 node.parameters.insert(READ_WHOLE.to_string(), OverseerValue::String(format!("read whole, since {} names it", what)));
@@ -207,7 +208,7 @@ fn window_the_list(node: &mut OverseerNode, root: &[OverseerNode], trail: &mut V
         }
     }
     name_the_entries(node);
-    narrow(node, wanted, root, trail, work_out_all);
+    narrow(node, wanted, &revealed, root, trail, work_out_all);
     WINDOWED.with(|w| w.borrow_mut().insert(address));
 }
 
@@ -670,6 +671,7 @@ fn window_of(node: &OverseerNode) -> Option<usize> {
 fn narrow(
     node: &mut OverseerNode,
     window: usize,
+    revealed: &[String],
     root: &[OverseerNode],
     trail: &mut Vec<String>,
     work_out_all: bool,
@@ -763,16 +765,19 @@ fn narrow(
     let list = trail.join("/");
     let has_parts = crate::parts::key_of(node).is_some();
     let branches = branches_of(node, &order);
+    let revealed_segments: std::collections::HashSet<String> =
+        revealed.iter().map(|key| format!("[{}]", crate::addressing::escape(key))).collect();
     let mut left_out = 0;
     let mut branches_left_out = std::collections::HashSet::new();
     for (rank, (at, _)) in order.into_iter().enumerate() {
         // A tree's window counts its top-level branches, each kept whole - see `branches_of`.
         let rank = branches.as_ref().map_or(rank, |b| b[&at]);
-        // Named by this interaction, so it stays - see `keeping_in_view`. And in a list with parts,
+        // Named by this interaction, or asked for by this reader, so it stays - see
+        // `keeping_in_view` and `viewstate::reveal`. And in a list with parts,
         // an entry the document still holds itself is worked out to go to its part, which its key
         // may need its template for - see `parts::written`.
         let in_view = rank < window
-            || addressable.get(at).is_some_and(|segment| is_wanted(segment))
+            || addressable.get(at).is_some_and(|segment| is_wanted(segment) || revealed_segments.contains(segment))
             || has_parts && !node.children[at].parameters.contains_key(crate::parts::PART);
         if in_view {
             node.children[at].parameters.remove(OUT_OF_VIEW);
@@ -842,7 +847,7 @@ pub fn window_again(nodes: &mut Vec<OverseerNode>, list: &str) -> Option<Vec<Str
     // Narrowed as though every entry were worked out, and those nothing had worked out marked so
     // again where they are still out of view: `narrow` itself would mark an entry that leaves view
     // as never worked out, which is only true of one nothing has worked out yet.
-    narrow(&mut node, wanted, nodes, &mut trail, true);
+    narrow(&mut node, wanted, &revealed_in(list), nodes, &mut trail, true);
     let mut came_into_view = Vec::new();
     for (entry, was_unworked) in node.children.iter_mut().zip(unworked) {
         if !was_unworked {
@@ -980,14 +985,26 @@ fn branches_of(
 //
 // A document worked out this way is not the one anybody else is handed, so the cache keeps it
 // apart - see `reading_more_key`.
+//
+// Beside the windows, the entries they asked to see by key - a chip pressed for one weeks back -
+// which stay in view whatever the window says, as an address an interaction is about does - see
+// `viewstate::reveal`.
 thread_local! {
-    static MORE: std::cell::RefCell<Vec<std::collections::HashMap<String, usize>>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+    static MORE: std::cell::RefCell<Vec<Reading>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Show this reader's lists as far as they asked, for as long as the guard lives.
-pub fn reading_more(asked: std::collections::HashMap<String, usize>) -> ReadingMore {
-    MORE.with(|more| more.borrow_mut().push(asked));
+struct Reading {
+    more: std::collections::HashMap<String, usize>,
+    revealed: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// Show this reader's lists as far as they asked, and the entries they asked for, for as long as
+/// the guard lives.
+pub fn reading_more(
+    asked: std::collections::HashMap<String, usize>,
+    revealed: std::collections::HashMap<String, Vec<String>>,
+) -> ReadingMore {
+    MORE.with(|more| more.borrow_mut().push(Reading { more: asked, revealed }));
     ReadingMore
 }
 
@@ -1006,8 +1023,18 @@ fn asked_for_more(list: &str) -> usize {
     MORE.with(|more| {
         more.borrow()
             .last()
-            .and_then(|asked| asked.get(list).copied())
+            .and_then(|reading| reading.more.get(list).copied())
             .unwrap_or(0)
+    })
+}
+
+/// The keys of this list's entries the reader asked to see whatever its window says.
+fn revealed_in(list: &str) -> Vec<String> {
+    MORE.with(|more| {
+        more.borrow()
+            .last()
+            .and_then(|reading| reading.revealed.get(list).cloned())
+            .unwrap_or_default()
     })
 }
 
@@ -1016,15 +1043,23 @@ fn asked_for_more(list: &str) -> usize {
 pub fn reading_more_key() -> String {
     MORE.with(|more| {
         let more = more.borrow();
-        let Some(asked) = more.last() else {
+        let Some(reading) = more.last() else {
             return String::new();
         };
-        let mut lists: Vec<_> = asked.iter().filter(|(_, n)| **n > 0).collect();
-        if lists.is_empty() {
+        let mut lists: Vec<_> = reading.more.iter().filter(|(_, n)| **n > 0).collect();
+        lists.sort();
+        let mut said: Vec<String> = lists.iter().map(|(list, n)| format!("{list}={n}")).collect();
+        let mut revealed: Vec<_> = reading.revealed.iter().filter(|(_, keys)| !keys.is_empty()).collect();
+        revealed.sort();
+        // Sorted, so the same entries asked for in another order are the same tree.
+        for (list, keys) in revealed {
+            let mut keys = keys.clone();
+            keys.sort();
+            said.push(format!("{list}{keys:?}"));
+        }
+        if said.is_empty() {
             return String::new();
         }
-        lists.sort();
-        let said: Vec<String> = lists.iter().map(|(list, n)| format!("{list}={n}")).collect();
         format!(";more={}", said.join(","))
     })
 }
@@ -3075,7 +3110,7 @@ fn resolve_node_templates(
                 window_the_list(node, all_nodes, &mut trail);
             }
         } else {
-            crate::parts::bring_in(node, &address, None);
+            crate::parts::bring_in(node, &address, None, &[]);
         }
         // A list asked to draw as a table needs its column set worked out before anything else,
         // while the template is in reach. Done first so that nothing here is holding a borrow on

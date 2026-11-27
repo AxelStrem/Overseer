@@ -21,7 +21,7 @@
 use crate::types::*;
 
 /// Characters that would otherwise be read as address structure.
-fn escape(segment: &str) -> String {
+pub(crate) fn escape(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len());
     for c in segment.chars() {
         match c {

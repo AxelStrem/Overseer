@@ -117,8 +117,9 @@ describe('a chip naming an entry in a part not read', () => {
     app.showMoreOf = vi.fn(async () => true)
     app.setStatus = vi.fn()
     noteChips()[0].click()
-    await vi.waitFor(() => expect(app.setStatus).toHaveBeenCalled())
-    expect(app.setStatus.mock.calls[0][0]).toBe('old: not found in the list')
+    await vi.waitFor(() => expect(app.setStatus).toHaveBeenCalledTimes(2))
+    expect(app.setStatus.mock.calls[0][0]).toBe('old: reading back to it')
+    expect(app.setStatus.mock.calls[1][0]).toBe('old: not found in the list')
   })
 
   it('reveals an entry the page draws without asking for more', () => {

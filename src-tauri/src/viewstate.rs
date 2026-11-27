@@ -31,6 +31,9 @@ struct Overlay {
     values: HashMap<String, OverseerValue>,
     /// How many times more of each windowed list this viewer asked to see, by the list's address.
     more: HashMap<String, usize>,
+    /// The entries this viewer asked to see whatever the window says, by the list's address: each
+    /// a key of the list, newest last - see `reveal`.
+    revealed: HashMap<String, Vec<String>>,
     used: Instant,
     /// Where the document as this viewer last saw it is held - see `worked_out`.
     worked_out: Option<WorkedOut>,
@@ -47,7 +50,7 @@ struct WorkedOut {
 
 impl Overlay {
     fn new() -> Self {
-        Overlay { values: HashMap::new(), more: HashMap::new(), used: Instant::now(), worked_out: None }
+        Overlay { values: HashMap::new(), more: HashMap::new(), revealed: HashMap::new(), used: Instant::now(), worked_out: None }
     }
 }
 
@@ -142,9 +145,43 @@ pub fn more(session: &str, document: &str) -> HashMap<String, usize> {
     })
 }
 
+/// How many entries of one list a viewer keeps revealed at most. A chip pressed for one entry
+/// after another adds each, and every one costs the part it is read from on each working out for
+/// them; the oldest goes first.
+const REVEALED_AT_MOST: usize = 12;
+
+/// This viewer asks a windowed list to show the entry with this key, whatever its window says:
+/// what a chip pressed for an entry the list does not draw asks for.
+///
+/// Kept apart from `ask_for_more` because a window more is every entry in it, and reaching one
+/// entry weeks back by windows draws - and works out, on every catch-up after - everything in
+/// between. A list with parts reads only the part that holds the key - see `parts::bring_in`.
+pub fn reveal(session: &str, document: &str, list: &str, key: &str) {
+    with(|held| {
+        let overlay = held
+            .entry((session.to_string(), document.to_string()))
+            .or_insert_with(Overlay::new);
+        let keys = overlay.revealed.entry(list.to_string()).or_default();
+        keys.retain(|k| k != key);
+        keys.push(key.to_string());
+        if keys.len() > REVEALED_AT_MOST {
+            keys.remove(0);
+        }
+        overlay.used = Instant::now();
+    });
+}
+
+/// The entries this viewer asked to see, by the list's address - see `reveal`.
+pub fn revealed(session: &str, document: &str) -> HashMap<String, Vec<String>> {
+    with(|held| match held.get(&(session.to_string(), document.to_string())) {
+        Some(overlay) => overlay.revealed.clone(),
+        None => HashMap::new(),
+    })
+}
+
 /// The same, held for whatever this viewer's work is about to resolve.
 pub fn reading_more(session: &str, document: &str) -> crate::resolver::ReadingMore {
-    crate::resolver::reading_more(more(session, document))
+    crate::resolver::reading_more(more(session, document), revealed(session, document))
 }
 
 /// Forget what a viewer was looking at - a page closed, or a document renamed out from under one.

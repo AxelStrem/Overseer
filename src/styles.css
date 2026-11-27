@@ -3965,6 +3965,12 @@ body.ov-backdrop-moving {
     cursor: pointer;
 }
 
+/* Pressed, and the list being read back as far as its entry. */
+.tag-chip.chip-reveals.chip-reading-back {
+    cursor: progress;
+    opacity: 0.6;
+}
+
 /* An entry just shown by a chip, marked for a moment so the eye finds it. */
 .revealed {
     animation: overseer-revealed 1.6s ease-out;

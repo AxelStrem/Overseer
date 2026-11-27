@@ -550,5 +550,6 @@ else. `save_overseer_audio` keeps a sound the same way, under `sounds/<document>
 `show_more_of_overseer_list` (`list_path`, the list's path of names) is the page asking a
 windowed list for one window more. It is kept against the session that asked, writes nothing,
 and answers with the whole document as that session now sees it. With `until`, a key of the list,
-it asks for as many windows more as it takes to draw the entry with that key - or until the list
-leaves nothing out - and answers once.
+it asks for that entry instead of a window: the session is shown it whatever the window says, and
+nothing between. A list kept in parts reads only the part that holds the key, and none for a key
+no part holds.

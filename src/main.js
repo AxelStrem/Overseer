@@ -2263,16 +2263,24 @@ tab Main {
     /// file, the bot and every other page still see the window the document states. The answer is
     /// the whole document, worked out with the wider window.
     ///
-    /// With `until`, a key of the list: as many windows more as it takes to draw that entry,
-    /// answered once - what a chip naming an entry not drawn asks for. Says whether the document
-    /// was drawn again.
+    /// With `until`, a key of the list: that entry is drawn for this page whatever the window
+    /// says, and no window more - what a chip naming an entry not drawn asks for. Says whether
+    /// the document was drawn again.
+    ///
+    /// An answer that comes back after the page moved on - an edit made, a catch-up taken - is
+    /// not drawn over it: it was worked out from the file as it stood before. The server keeps
+    /// what was asked for against this page, so a catch-up brings it instead, described against
+    /// what the page shows; with an editor open, the next catch-up does.
     async showMoreOf(listPath, until = null) {
         const file = this.currentFile
         if (!file) return false
+        const shown = JSON.stringify(this.showing())
         const args = { path: file, listPath }
         if (until !== null && until !== undefined) args.until = String(until)
         const update = await this.ask('show_more_of_overseer_list', args)
         if (!update || file !== this.currentFile || !Array.isArray(update.nodes)) return false
+        if (this.busyForCatchingUp()) return false
+        if (JSON.stringify(this.showing()) !== shown) return !!(await this.catchUp())
         this.showWhole(update)
         return true
     }

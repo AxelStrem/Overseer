@@ -2131,9 +2131,14 @@ fn viewers_copy(content: &str, document: &str, session: &str) -> Option<Vec<Over
 /// changed, because what the page holds was worked out with the narrower window, and a copy held
 /// for the wider one may be another viewer's.
 ///
-/// With `until`, as many windows more as it takes to draw the entry with that key - a chip
-/// pressed for a closed item weeks back - or until the list has nothing left out. Worked out
-/// again for each window, but answered once, so the page draws once.
+/// With `until`, the entry with that key instead - a chip pressed for a closed item weeks back -
+/// kept in view for this viewer whatever the window says, and no window more: see
+/// `viewstate::reveal`. A list with parts reads the one part that holds it, which the summaries of
+/// its parts' keys say, and nothing at all for a key no part holds. Worked out once.
+///
+/// It was as many windows more as it took to reach the entry, each worked out in turn: on the
+/// project tracker, a minute for a key in no part, and every catch-up after it worked out with
+/// the whole of History for that viewer.
 pub fn show_more_at(
     path: &str,
     document: &str,
@@ -2144,19 +2149,11 @@ pub fn show_more_at(
     let text = std::fs::read_to_string(path)
         .map_err(|e| OverseerError::IoError(format!("could not read the document: {}", e)))?;
     let address = list_path.join("/");
-    let steps: Vec<&str> = list_path.iter().map(String::as_str).collect();
-    let mut nodes = Vec::new();
-    // Bounded all the same: each window shows more, but a list that kept saying it left
-    // something out would otherwise hold the request for good.
-    for _ in 0..1000 {
-        crate::viewstate::ask_for_more(session, document, &address);
-        nodes = load_document_for(text.clone(), document, session)?;
-        let Some(key) = until else { break };
-        match find_node_by_path_transparent(&nodes, &steps) {
-            Some(list) if !draws_the_entry(list, key) && leaves_entries_out(list) => continue,
-            _ => break,
-        }
+    match until {
+        Some(key) => crate::viewstate::reveal(session, document, &address, key),
+        None => crate::viewstate::ask_for_more(session, document, &address),
     }
+    let nodes = load_document_for(text.clone(), document, session)?;
     // What the viewer has set is in what they are shown, and so in the text they hold - as a
     // change answers it - with the file told apart when it differs.
     let shown = if crate::viewstate::overlay(session, document).is_empty() {
@@ -2184,31 +2181,6 @@ pub fn show_more_at(
         narrowings: Vec::new(),
         calls: Vec::new(),
     })
-}
-
-/// Whether a list draws an entry whose key field holds `key`.
-fn draws_the_entry(list: &OverseerNode, key: &str) -> bool {
-    let field = match list.parameters.get("key") {
-        Some(OverseerValue::String(field)) if !field.is_empty() => field.as_str(),
-        _ => "tag",
-    };
-    list.children
-        .iter()
-        .filter(|entry| !crate::resolver::out_of_view(entry))
-        .any(|entry| match find_node_by_path_transparent(&entry.children, &[field]) {
-            Some(held) => {
-                let value = held.parameters.get("_computed_value").or_else(|| held.parameters.get("value"));
-                matches!(value, Some(OverseerValue::String(s)) if s == key)
-            }
-            None => false,
-        })
-}
-
-/// Whether a list leaves anything out that one window more would show: entries past its window,
-/// or parts it has not read.
-fn leaves_entries_out(list: &OverseerNode) -> bool {
-    let counted = |name: &str| matches!(list.parameters.get(name), Some(OverseerValue::Integer(n)) if *n > 0);
-    counted(crate::resolver::LEFT_OUT) || crate::parts::leaves_parts_unread(list)
 }
 
 /// The override nodes for an entry, from a map of field name to value.

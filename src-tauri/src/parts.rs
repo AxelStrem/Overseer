@@ -266,10 +266,51 @@ pub fn parts_of(document: &Path) -> std::collections::BTreeMap<String, Vec<Strin
 /// `UNREAD` - and a tree worked out again reads what more it now needs of them, the rest when
 /// something reaches past what it holds.
 ///
+/// `revealed` are keys of entries a reader asked to see whatever the window says - see
+/// `viewstate::reveal`. The part holding each is read too, and no other: which one that is, the
+/// summary of each part's keys says, made once for as long as the part stands as it does. A key no
+/// part holds reads nothing.
+///
 /// A document worked out with no file to say where it is - a text handed over on its own - has no
 /// parts to read, and its list holds only what the text does.
-pub fn bring_in(list: &mut OverseerNode, address: &str, wanted: Option<usize>) {
-    bring_in_choosing(list, address, |_key, held| wanted.is_none_or(|wanted| held < wanted));
+pub fn bring_in(list: &mut OverseerNode, address: &str, wanted: Option<usize>, revealed: &[String]) {
+    let field = key_field(list).to_string();
+    bring_in_choosing(list, address, |_key, file, held| {
+        wanted.is_none_or(|wanted| held < wanted) || !revealed.is_empty() && holds_a_key(file, &field, revealed)
+    });
+}
+
+/// The field a list's entries are known by: its `key`, or `tag` when it names none.
+fn key_field(list: &OverseerNode) -> &str {
+    match list.parameters.get("key") {
+        Some(OverseerValue::String(field)) if !field.is_empty() => field.as_str(),
+        _ => "tag",
+    }
+}
+
+/// The name a part's keys are kept under among its summaries, before the field's name.
+const KEYS: &str = "keys in the part";
+
+/// Whether the part in `file` holds an entry whose `field` is one of `keys` - as the entry writes
+/// it, which is what a chip names it by. From the part's summary of its keys, so a part is parsed
+/// for it once and not again until it changes; a part that cannot be read holds none.
+fn holds_a_key(file: &Path, field: &str, keys: &[String]) -> bool {
+    let named = file.to_string_lossy().into_owned();
+    let stamp = crate::actions::mount_stamp(&named);
+    let summary = crate::partsums::summary(&format!("{} | {}", KEYS, field), &named, &stamp, |entries| {
+        crate::partsums::Summary {
+            values: entries
+                .iter()
+                .filter(|e| is_an_entry(e))
+                .filter_map(|e| crate::app_api::find_node_by_path_transparent(&e.children, &[field]))
+                .filter_map(|held| held.parameters.get("value").cloned())
+                .collect(),
+            ..Default::default()
+        }
+    });
+    summary.is_some_and(|summary| {
+        summary.values.iter().any(|value| matches!(value, OverseerValue::String(s) if keys.contains(s)))
+    })
 }
 
 /// Read in the parts a write is about to put entries into, that the list has not read: a part is
@@ -279,7 +320,7 @@ pub fn bring_in(list: &mut OverseerNode, address: &str, wanted: Option<usize>) {
 /// come into has been worked out already, and they are not drawn.
 fn bring_in_for_a_write(list: &mut OverseerNode, keys: &[String]) {
     let Some(address) = address_of_unread(list).map(str::to_string) else { return };
-    bring_in_choosing(list, &address, |key, _held| keys.iter().any(|k| k == key));
+    bring_in_choosing(list, &address, |key, _file, _held| keys.iter().any(|k| k == key));
     // Every entry of these parts the list holds was just read: none was, while they were unread.
     for entry in list.children.iter_mut() {
         if matches!(entry.parameters.get(PART), Some(OverseerValue::String(k)) if keys.contains(k)) {
@@ -289,7 +330,7 @@ fn bring_in_for_a_write(list: &mut OverseerNode, keys: &[String]) {
     }
 }
 
-fn bring_in_choosing(list: &mut OverseerNode, address: &str, wants: impl Fn(&str, usize) -> bool) {
+fn bring_in_choosing(list: &mut OverseerNode, address: &str, wants: impl Fn(&str, &Path, usize) -> bool) {
     if key_of(list).is_none() {
         return;
     }
@@ -339,7 +380,7 @@ fn bring_in_choosing(list: &mut OverseerNode, address: &str, wants: impl Fn(&str
     let mut left: Vec<String> = Vec::new();
     let mut left_stamps: Vec<String> = Vec::new();
     for (key, file) in unread.into_iter().rev() {
-        if !wants(&key, held) {
+        if !wants(&key, &file, held) {
             // How a part left unread stands is what its summary is kept under, and what the
             // document worked out from that summary is only as current as - see `partsums`.
             let line = stamp_line(&file);

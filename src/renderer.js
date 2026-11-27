@@ -8345,11 +8345,17 @@ export class OverseerRenderer {
             event.stopPropagation()
             const why = path ? this.whyNotRevealed(path) : 'not read'
             if (this.wantsReadingBack(why) && this.canReadBackTo(reach)) {
+                // Once: a second press while the first is out would only ask the server again.
+                if (chip.classList.contains('chip-reading-back')) return
+                chip.classList.add('chip-reading-back')
                 this.sayWhyNotRevealed(chip, 'reading back to it')
+                this.app?.setStatus?.(`${reach.key}: reading back to it`, '', 'info')
                 this.readBackTo(reach).then((left) => {
-                    // The page was drawn again, and this chip with it: what stood in the way is
-                    // said where the press was answered, on the status line.
+                    // The page was drawn again, and this chip with it, unless it was not: what
+                    // stood in the way is said where the press was answered, on the status line.
+                    chip.classList.remove('chip-reading-back')
                     if (left) this.app?.setStatus?.(`${reach.key}: ${left}`, '', 'warning')
+                    else this.app?.setStatus?.(`${reach.key}: shown`, '', 'info')
                 })
                 return
             }
@@ -8394,7 +8400,11 @@ export class OverseerRenderer {
         const list = this.findNodeByPath(doc(), reach.list)
         const listPath = Array.isArray(list?.__overseer_path) && list.__overseer_path.length ? list.__overseer_path : reach.list
         try {
-            if (!await this.app.showMoreOf(listPath, reach.key)) return 'could not read further back'
+            if (!await this.app.showMoreOf(listPath, reach.key)) {
+                // Asked for all the same, and kept against this page: the next catch-up draws it.
+                if (this.app.busyForCatchingUp?.()) return 'drawn once the edit is done'
+                return 'could not read further back'
+            }
         } catch (_) {
             return 'could not read further back'
         }
