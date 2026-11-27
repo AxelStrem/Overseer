@@ -3317,6 +3317,28 @@ body.ov-backdrop-moving {
     margin-bottom: 2px;
 }
 
+/* A task's box stands where its bullet would. */
+.markdown-enabled li.ov-task-item {
+    list-style: none;
+}
+
+.markdown-enabled .ov-task {
+    margin: 0 6px 0 -20px;
+    vertical-align: -2px;
+    cursor: pointer;
+}
+
+.markdown-enabled .ov-task:disabled {
+    cursor: default;
+}
+
+/* A done task's words, and not the tasks nested under it. */
+.markdown-enabled li.ov-task-item.done > .ov-task-text,
+.markdown-enabled li.ov-task-item.done > p:first-child {
+    text-decoration: line-through;
+    color: var(--ov-muted);
+}
+
 /* Tags, as chips rather than as the line they are stored on.
  *
  * A `tags` field holds a comma-separated set. Rendered as a string, six labels read as forty

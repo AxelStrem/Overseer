@@ -2649,6 +2649,22 @@ formula's result. A sound recorded with the editor's `Record` button there is wr
 one dropped or pasted in unticked. Nothing in Overseer transcribes: the mark is for whoever reads
 the document, such as an agent loop working a tracker.
 
+A list item that starts with `[ ]` or `[x]` is a task, drawn with a box ticked as it is written,
+and a done task's words struck through - a checklist is a list of them, and a single checkbox a
+list of one:
+
+```overseer
+text packing (markdown=true, mutable=true) = "- [x] passport
+- [ ] charger
+    - [ ] the long cable
+- [ ] Agree with the plan"
+```
+
+A click on a box rewrites that task's `[ ]` to `[x]`, or back, and nothing else of the text, and
+writes the text as an edit of it would be - its `on change` runs, and one undo takes it back. Only
+a text that may be changed and holds what is drawn takes clicks, not a formula's result; anywhere
+else the boxes are drawn and cannot be clicked. A task written in code is text, and is no task.
+
 #### Marks
 
 A `mark` is drawn and nothing more: it is unnamed, holds no value, and, like an unnamed `div`, is

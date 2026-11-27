@@ -694,6 +694,65 @@ export const withSoundAlt = (text, index, alt, file = null) => {
     return source.slice(0, at) + `![${alt}` + source.slice(at + end)
 }
 
+/// Every item of every list in `source`, in the order the page draws them - an item before the
+/// items nested in it - each with the line of the source its bullet is on, counted from 0. The
+/// items are found as markdown finds them, so a list written in code is never one; a control
+/// written into an item's text - a task's box, say - is found on its line.
+export const listItemLines = (source) => {
+    const items = []
+    const linesIn = (raw) => (String(raw ?? '').match(/\n/g) || []).length
+    const walk = (tokens, line) => {
+        for (const token of tokens || []) {
+            if (token.type === 'list') {
+                let at = line
+                for (const item of token.items) {
+                    items.push({ item, line: at })
+                    walk(item.tokens, at)
+                    at += linesIn(item.raw)
+                }
+            } else if (token.type === 'blockquote') {
+                walk(token.tokens, line)
+            }
+            line += linesIn(token.raw)
+        }
+    }
+    try { walk(markdown.lexer(String(source ?? '')), 0) } catch (_) { return [] }
+    return items
+}
+
+/// `source` with its `line`-th line (counted from 0, as `listItemLines` counts) passed through
+/// `rewrite`, and every other line and line ending as it was - or null if there is no such line,
+/// or `rewrite` gives null for it.
+const withLineRewritten = (source, line, rewrite) => {
+    const parts = String(source ?? '').split(/(\r\n|\r|\n)/)
+    if (line < 0 || line * 2 >= parts.length) return null
+    const now = rewrite(parts[line * 2])
+    if (now === null || now === undefined) return null
+    parts[line * 2] = now
+    return parts.join('')
+}
+
+/// A task's box as written at the start of its line, after any quote marks and its bullet.
+const TASK_BOX = /^((?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[[ xX]\]/
+
+/// `text` with its `index`-th task (counted from 0, as they are drawn) ticked or unticked, and
+/// nothing else changed - or null if it has no such task. See `listItemLines`.
+export const withTaskTicked = (text, index, ticked) => {
+    const tasks = listItemLines(text).filter(({ item }) => item.task)
+    const task = tasks[index]
+    if (!task) return null
+    return withLineRewritten(text, task.line, (line) =>
+        TASK_BOX.test(line) ? line.replace(TASK_BOX, (_, lead) => `${lead}[${ticked ? 'x' : ' '}]`) : null)
+}
+
+/// How many tasks the text being drawn has drawn so far: each box carries its number, which
+/// `withTaskTicked` takes.
+let tasksDrawn = 0
+
+/// The HTML before the first block in a task's drawn body - the words beside its box - and what
+/// follows: a done task strikes its words through, and not the tasks nested under it.
+const TASK_BODY_BLOCK = /<(?:ul|ol|p|pre|blockquote|table|h[1-6]|hr|div)[\s>]/
+
 /// Plays, pauses and seeks every player on the page, and keeps each one's bar and time up to
 /// date, from listeners on the document: a player drawn inside markdown has no code of its own.
 /// A press on a player is the player's alone - it never reaches the text it sits in, which would
@@ -934,6 +993,23 @@ const markdown = new Marked({
         },
         codespan(text) {
             return `<code>${writtenInCode(text)}</code>`
+        },
+        // A task's box is drawn shut: a text that may be changed opens its boxes once drawn
+        // (see `wakeTasks`), and a click rewrites the text rather than ticking the box.
+        checkbox(checked) {
+            return `<input type="checkbox" class="ov-task" data-task-index="${tasksDrawn++}" aria-label="Done"${checked ? ' checked' : ''} disabled>`
+        },
+        listitem(text, task, checked) {
+            if (!task) return `<li>${text}</li>\n`
+            const done = checked ? ' done' : ''
+            // A tight item's words follow its box directly; a loose one's are its first paragraph.
+            const box = /^<input [^>]*class="ov-task"[^>]*> ?/.exec(text)
+            if (!box) return `<li class="ov-task-item${done}">${text}</li>\n`
+            const rest = text.slice(box[0].length)
+            const block = rest.search(TASK_BODY_BLOCK)
+            const words = block < 0 ? rest : rest.slice(0, block)
+            const after = block < 0 ? '' : rest.slice(block)
+            return `<li class="ov-task-item${done}">${box[0]}<span class="ov-task-text">${words}</span>${after}</li>\n`
         },
     },
 })
@@ -6959,6 +7035,8 @@ export class OverseerRenderer {
         if (tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable) return true
         if (tag === 'A') return el.hasAttribute('href')
         if (tag === 'INPUT') {
+            // A task's box in a text keeps its press when it can be ticked.
+            if (el.classList && el.classList.contains('ov-task')) return !el.disabled
             // A field's checkbox is decided by its field, which knows whether it can change.
             if (el.type === 'checkbox' && el.parentElement && el.parentElement.closest('.overseer-field')) return false
             return !el.disabled
@@ -8691,6 +8769,7 @@ export class OverseerRenderer {
             // Use markdown rendering
             value.innerHTML = this.renderMarkdown(textContent, node)
             value.classList.add('markdown-enabled')
+            this.wakeTasks(value, node)
         } else {
             // Plain text with line breaks preserved
             this.setTextWithIcons(value, textContent, node)
@@ -8700,6 +8779,15 @@ export class OverseerRenderer {
         value.addEventListener('ov-audio-request', (e) => {
             const player = e.target && e.target.closest ? e.target.closest('.ov-audio[data-audio-index]') : null
             if (player) this.askForTranscription(value, node, player, Boolean(e.detail && e.detail.wanted))
+        })
+
+        // A task's box is the box's alone: the press does not reach the entry the text is in.
+        value.addEventListener('click', (e) => {
+            const box = e.target && e.target.closest ? e.target.closest('.ov-task') : null
+            if (!box || !value.contains(box)) return
+            e.preventDefault()
+            e.stopPropagation()
+            if (!box.disabled) this.tickTask(value, node, box)
         })
 
         // Make it editable on double-click (respect mutable)
@@ -13398,6 +13486,7 @@ export class OverseerRenderer {
                     const asText = (newValue == null) ? '' : String(newValue)
                     if (element.classList && element.classList.contains('markdown-enabled')) {
                         element.innerHTML = this.renderMarkdown(asText, node)
+                        this.wakeTasks(element, node)
                     } else {
                         this.setTextWithIcons(element, asText, node)
                     }
@@ -14408,6 +14497,7 @@ export class OverseerRenderer {
                 const newValue = textarea.value
                 // Update the element with rendered markdown
                 element.innerHTML = this.renderMarkdown(newValue, node)
+                this.wakeTasks(element, node)
                 
                 await this.writeMarkdownText(element, node, newValue, () => {
                     element.style.display = displayBefore
@@ -14442,17 +14532,52 @@ export class OverseerRenderer {
     /// stays as it was drawn.
     askForTranscription(element, node, player, wanted) {
         if (this.themeAt(player, 'audio-request') !== 'transcription') return null
+        return this.rewriteDrawnText(element, node, (was) =>
+            withSoundAlt(was, Number(player.dataset.audioIndex), wanted ? SOUND_REQUESTED : '', player.dataset.audioFile))
+    }
+
+    /// The text drawn in `element` - the node it holds, found again in the document - if a
+    /// control drawn in it may rewrite it: one that may be changed and holds what is drawn, not a
+    /// formula's result nor a `shown` text. Null anywhere else.
+    rewritableText(element, node) {
         const doc = this.app && this.app.currentDocument
-        const target = (doc && this.findNodeByPath(doc, this.buildNodePath(element))) || node
+        let target = null
+        try { target = (doc && this.findNodeByPath(doc, this.buildNodePath(element))) || node } catch (_) { target = node }
         if (!target || this.getEffectiveMutableMode(target, element) !== 'true') return null
         if (this.shownText(target) !== null) return null
         const raw = target.parameters && target.parameters.value
         if (raw && typeof raw === 'object' && raw.Formula !== undefined) return null
+        return target
+    }
+
+    /// Rewrites the text drawn in `element` from a control drawn in it - a sound's transcription
+    /// box, a task's box: `rewrite` is given what the text says and gives what it is to say, or
+    /// null for nothing. It is drawn again from that and written as an edit of it would be. Only
+    /// into a `rewritableText`; anywhere else nothing changes.
+    rewriteDrawnText(element, node, rewrite) {
+        const target = this.rewritableText(element, node)
+        if (!target) return null
         const was = String(this.getNodeValue(target) ?? '')
-        const now = withSoundAlt(was, Number(player.dataset.audioIndex), wanted ? SOUND_REQUESTED : '', player.dataset.audioFile)
-        if (now === null || now === was) return null
+        const now = rewrite(was)
+        if (now === null || now === undefined || now === was) return null
         element.innerHTML = this.renderMarkdown(now, target)
+        this.wakeTasks(element, target)
         return this.writeMarkdownText(element, target, now)
+    }
+
+    /// Opens the task boxes of the markdown drawn in `element` where a click may tick them - see
+    /// `rewritableText`. They are drawn shut, so a text that cannot be changed keeps them so.
+    wakeTasks(element, node) {
+        if (!element || !element.querySelector || !element.querySelector('.ov-task')) return
+        const open = !!this.rewritableText(element, node)
+        for (const box of element.querySelectorAll('.ov-task')) box.disabled = !open
+    }
+
+    /// A click on a task's box in the text drawn in `element`: the box does not tick itself - the
+    /// text's line for it is rewritten, and the text drawn again from what it then says.
+    tickTask(element, node, box) {
+        return this.rewriteDrawnText(element, node, (was) =>
+            withTaskTicked(was, Number(box.dataset.taskIndex), !box.hasAttribute('checked')))
     }
 
     /// Writes a markdown text's new value: into the document, and then through its `on change`
@@ -15206,6 +15331,7 @@ try {
 
     _renderMarkdownAlone(text) {
         soundsDrawn = 0
+        tasksDrawn = 0
         try {
             const withIcons = typeof text === 'string' && text.indexOf('<icon=') !== -1 ? markIcons(text) : text
             return drawColourMarks(drawIconMarks(markdown.parse(markColourTags(withIcons))));
@@ -15923,6 +16049,7 @@ try {
             const html = this.renderMarkdown(String(computedValue ?? ''), newNode)
             if (textElement.innerHTML !== html) {
                 textElement.innerHTML = html
+                this.wakeTasks(textElement, newNode)
                 if (DEBUG_MODE) console.log('📝 Updated markdown element')
             }
         } else {
