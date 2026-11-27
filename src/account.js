@@ -52,7 +52,10 @@ export class Account {
         this.can = (answer && answer.can) || null
         this.document = (answer && answer.document) || null
         this.showFullName()
-        if (this.app && this.app.renderer) this.app.renderer.readOnly = this.can === 'read'
+        if (this.app && this.app.renderer) {
+            this.app.renderer.readOnly = this.can === 'read'
+            this.app.renderer.viewer = (this.person && this.person.username) || ''
+        }
         if (this.can === 'read' && this.app && this.app.currentFile && typeof this.app.updateTitle === 'function') {
             this.app.updateTitle()
         }

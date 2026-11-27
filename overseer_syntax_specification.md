@@ -1392,6 +1392,9 @@ context week_start = "system"
     where it says none.
     `request`, `transcription` to show a box on each sound in a markdown text asking for it to be
     transcribed (see "Sounds"); a project tracker's comments say it.
+  - `markdown`: `sign`, `me` to sign each click on a task's box, a selector's option or a vote's
+    in a markdown text with the chip of whoever is signed in (see "Sounds", where a markdown
+    text's tasks and options follow); a project tracker's comments say it.
   - `field`: `value-frame` - `box`, each value in a padded frame of its own that shows under the
     pointer, or `none`, the value as text; `spacing`, the space above and below a field (`8px`);
     `number-align`, `start` or `end` (the default), where a number sits in its field.
@@ -1444,7 +1447,7 @@ context week_start = "system"
   container's theme: a `table` key changes the table's heading and rows, not the fields in it -
   unless it holds that kind's keys, as above. The kinds are `button`, `checkbox`, `chip` (tags and
   enums), `tab` (a tab bar and its tabs), `table` (a list drawn as a table), `field`, `chart`,
-  `separator`, `tree` and `audio`. Each of them changes what its look takes from the theme, and nothing
+  `separator`, `tree`, `audio` and `markdown`. Each of them changes what its look takes from the theme, and nothing
   it draws in a fixed way: a solid button's label is light or dark to read on its colour whatever
   its `text`, and `button/label` says otherwise.
 - **`backdrop` is what is painted over `background`**: layers, each a key of its own, drawn in the
@@ -2692,6 +2695,17 @@ A click on a selector's option marks it `(x)` and clears every other option of t
 option of another list, or of a list nested in it, keeps its mark. A click on a vote's option adds
 one to its count, and nothing takes one back. Both rewrite only the lines they mark and write the
 text as a click on a task's box does, in the same texts; a list may mix options with plain items.
+
+Where the theme's `markdown/sign` is `me` and someone is signed in - `me/handle` is not empty -
+each click also says who made it, with their chip at the end of the line. Ticking a task adds
+`<@handle>` (once), and unticking it takes every chip at its end off: `- [x] buy milk <@ap31>`.
+Choosing an option moves the chip with the choice - the chosen line ends with the chooser's
+alone, and the other options of the list with none: `- (x) Option B <@ap31>`. A vote adds one
+and the voter's chip, `- (+2) Option A <@bob> <@ap31>`, and a second click by the same person
+takes it back, one less and their chip gone; `(+1)` goes back to `(+)`. Elsewhere, or with
+nobody signed in, a click writes only its mark. The run of person chips a task or an option
+ends with is drawn as their icons alone, the full chip on hover, whether or not the theme signs;
+an author's own `<@bob>` at the very end of an option is taken for one of them.
 
 #### Marks
 

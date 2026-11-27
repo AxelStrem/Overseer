@@ -255,7 +255,7 @@ const BURST_DOTS = 8
 const BUTTON_STYLES = ['outline', 'plain']
 /// The kinds of element a theme says something about, and those of them that hold others - a
 /// table's `button` keys are how the buttons in a table look.
-const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'tree', 'audio']
+const THEME_KINDS = ['button', 'checkbox', 'chip', 'tab', 'table', 'field', 'chart', 'separator', 'tree', 'audio', 'markdown']
 const KINDS_HOLDING = { table: '.overseer-list.view-table', tab: '.tab-bar' }
 
 /// A theme key said in words, as the CSS values the stylesheet reads: each is written beside the
@@ -744,13 +744,34 @@ const TASK_BOX = /^((?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[[ xX]\]/
 
 /// `text` with its `index`-th task (counted from 0, as they are drawn) ticked or unticked, and
 /// nothing else changed - or null if it has no such task. See `listItemLines`.
-export const withTaskTicked = (text, index, ticked) => {
+export const withTaskTicked = (text, index, ticked, signer = null) => {
     const tasks = listItemLines(text).filter(({ item }) => item.task)
     const task = tasks[index]
     if (!task) return null
-    return withLineRewritten(text, task.line, (line) =>
-        TASK_BOX.test(line) ? line.replace(TASK_BOX, (_, lead) => `${lead}[${ticked ? 'x' : ' '}]`) : null)
+    return withLineRewritten(text, task.line, (line) => {
+        if (!TASK_BOX.test(line)) return null
+        const boxed = line.replace(TASK_BOX, (_, lead) => `${lead}[${ticked ? 'x' : ' '}]`)
+        if (!signer) return boxed
+        const { words, people } = signedBy(boxed)
+        if (!ticked) return words
+        return signedLine(words, people.includes(signer) ? people : [...people, signer])
+    })
 }
+
+/// The run of person chips at the very end of a line, ` <@ap31> <@bob>`, which a signed click
+/// writes - see `signedBy`.
+const TRAILING_PEOPLE = /(?:[ \t]+<@[^<>&\s]+>)+[ \t]*$/
+
+/// A line split into its words and the people who signed it: the handles of the person chips it
+/// ends with, in the order written. An author's own `<@bob>` at the very end is taken for one.
+const signedBy = (line) => {
+    const run = TRAILING_PEOPLE.exec(line)
+    if (!run) return { words: line, people: [] }
+    return { words: line.slice(0, run.index), people: [...run[0].matchAll(/<@([^<>&\s]+)>/g)].map((m) => m[1]) }
+}
+
+/// `words` signed by `people`, each a chip after a space at the line's end.
+const signedLine = (words, people) => words.replace(/[ \t]+$/, '') + people.map((who) => ` <@${who}>`).join('')
 
 /// An option of a selector, `( )` or `(x)`, and one of a vote, `(+)` or `(+n)`, as written at the
 /// start of its line after any quote marks and its bullet, with a space or the line's end after.
@@ -767,8 +788,9 @@ const markedItems = (source, mark) => {
 /// `text` with its `index`-th selector option (counted from 0 over the whole text, as they are
 /// drawn) chosen, `(x)`, and every other option of the same list cleared, `( )`. An option of
 /// another list, or of a list nested in this one, is left as it was. Null if there is no such
-/// option.
-export const withChoiceMade = (text, index) => {
+/// option. Chosen by `signer`, a handle, the chosen line is signed by them alone, and the other
+/// options of its list by nobody.
+export const withChoiceMade = (text, index, signer = null) => {
     const options = markedItems(text, CHOICE_MARK)
     const chosen = options[index]
     if (!chosen) return null
@@ -776,18 +798,36 @@ export const withChoiceMade = (text, index) => {
     for (const option of options) {
         if (option.list !== chosen.list) continue
         const mark = option === chosen ? 'x' : ' '
-        rewrites.set(option.line, (line) => line.replace(CHOICE_MARK, (_, lead) => `${lead}(${mark})`))
+        rewrites.set(option.line, (line) => {
+            const marked = line.replace(CHOICE_MARK, (_, lead) => `${lead}(${mark})`)
+            if (!signer) return marked
+            return signedLine(signedBy(marked).words, option === chosen ? [signer] : [])
+        })
     }
     return withLinesRewritten(text, rewrites)
 }
 
 /// `text` with one more vote for its `index`-th vote option (counted from 0 over the whole text,
 /// as they are drawn): `(+)` counts none, and becomes `(+1)`. Null if there is no such option.
-export const withVoteAdded = (text, index) => {
+export const withVoteAdded = (text, index) => withVoteToggled(text, index, null)
+
+/// `text` with `signer`'s vote for its `index`-th vote option given or taken back: a line they
+/// have not signed counts one more and is signed by them, and one they have counts one less and
+/// loses their chip - `(+1)` going back to `(+)`. Without a signer a vote is only ever added, as
+/// `withVoteAdded` says. Null if there is no such option.
+export const withVoteToggled = (text, index, signer) => {
     const option = markedItems(text, VOTE_MARK)[index]
     if (!option) return null
-    return withLineRewritten(text, option.line, (line) =>
-        line.replace(VOTE_MARK, (_, lead, count) => `${lead}(+${(Number(count) || 0) + 1})`))
+    return withLineRewritten(text, option.line, (line) => {
+        const { words, people } = signer ? signedBy(line) : { words: line, people: [] }
+        const back = !!signer && people.includes(signer)
+        const counted = words.replace(VOTE_MARK, (_, lead, count) => {
+            const now = Math.max(0, (Number(count) || 0) + (back ? -1 : 1))
+            return `${lead}(+${now || ''})`
+        })
+        if (!signer) return counted
+        return signedLine(counted, back ? people.filter((who) => who !== signer) : [...people, signer])
+    })
 }
 
 /// An option's mark at the start of its drawn words - after the `<p>` of a loose list's item.
@@ -1273,6 +1313,8 @@ export class OverseerRenderer {
     this._defaultTopLevelMutable = false
     // Set for a document shared with whoever is looking only to read - see `getEffectiveMutableMode`.
     this.readOnly = false
+    // The username of whoever is signed in, which a signed click writes - see `pressTextControl`.
+    this.viewer = ''
         // What is typed into textboxes, by path - see `createTextboxElement`.
         this._typed = new Map()
         // Which of those keys are secret boxes, which no press sends - see `typedText`.
@@ -8156,6 +8198,12 @@ export class OverseerRenderer {
         const chip = this.tagChip(tag, known, remove)
         const asked = String((node && this.getParameterValue(node, 'chip')) || '').trim().toLowerCase()
         if (asked !== 'icon' || !known) return chip
+        return this.iconOnlyChip(chip, tag, known)
+    }
+
+    /// `chip`, drawn for `tag` and the entry `known` of its vocabulary, made its icon alone - or
+    /// its initial - with the full chip in the hover popup. See `fieldChip`.
+    iconOnlyChip(chip, tag, known) {
         const name = chip.querySelector(':scope > .chip-name')
         if (name) name.remove()
         if (!chip.querySelector(':scope > .chip-icon')) {
@@ -14656,17 +14704,44 @@ export class OverseerRenderer {
         element.querySelectorAll('.ov-vote').forEach((option, i) => { option.dataset.voteIndex = String(i) })
         const open = !!this.rewritableText(element, node)
         for (const control of controls) control.disabled = !open
+        this.drawSignatures(element, node)
+    }
+
+    /// The person chips a task, a selector's option or a vote's ends with - who ticked, chose or
+    /// voted, as a signed click writes them (see `pressTextControl`) - drawn as their icons alone,
+    /// as on a bench, the full chip on hover. Drawn wherever the text holds them, whether or not
+    /// the theme signs: the text says who.
+    drawSignatures(element, node) {
+        const holders = element.querySelectorAll(
+            'li.ov-task-item > .ov-task-text, li.ov-choice-item > .ov-choice-text, li.ov-vote-item > .ov-vote-text, ' +
+            'li.ov-choice-item > p:first-child, li.ov-vote-item > p:first-child')
+        let people = null
+        for (const holder of holders) {
+            for (let at = holder.lastChild; at; at = at.previousSibling) {
+                if (at.nodeType === 3 && !at.textContent.trim()) continue
+                const chip = at.nodeType === 1 && at.classList.contains('inline-chip') && at.dataset.mark === '@' ? at : null
+                if (!chip || chip.classList.contains('chip-icon-only')) break
+                if (!people) people = this.tagVocabulary(node, '@')
+                const known = people.get(chip.dataset.tag)
+                if (known) this.iconOnlyChip(chip, chip.dataset.tag, known)
+            }
+        }
     }
 
     /// A click on a control drawn in the markdown of `element` - a task's box, a selector's or a
     /// vote's option: the control does not change itself - the text's line for it is rewritten,
     /// and the text drawn again from what it then says.
+    /// Where the theme's `markdown/sign` is `me` and someone is signed in, the click is signed
+    /// with their chip at the line's end.
     pressTextControl(element, node, control) {
         const list = control.classList
+        // A pane beside the page has a renderer of its own, and the page's knows who is looking.
+        const viewer = this.viewer || (typeof window !== 'undefined' && window.app && window.app.renderer && window.app.renderer.viewer) || ''
+        const signer = viewer && this.themeAt(element, 'markdown-sign') === 'me' ? viewer : null
         return this.rewriteDrawnText(element, node, (was) => {
-            if (list.contains('ov-task')) return withTaskTicked(was, Number(control.dataset.taskIndex), !control.hasAttribute('checked'))
-            if (list.contains('ov-choice')) return withChoiceMade(was, Number(control.dataset.choiceIndex))
-            if (list.contains('ov-vote')) return withVoteAdded(was, Number(control.dataset.voteIndex))
+            if (list.contains('ov-task')) return withTaskTicked(was, Number(control.dataset.taskIndex), !control.hasAttribute('checked'), signer)
+            if (list.contains('ov-choice')) return withChoiceMade(was, Number(control.dataset.choiceIndex), signer)
+            if (list.contains('ov-vote')) return withVoteToggled(was, Number(control.dataset.voteIndex), signer)
             return null
         })
     }
