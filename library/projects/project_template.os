@@ -75,6 +75,10 @@ tab project (label=$(name), mutable=true) {
             int points_total (hidden=true) = $(../points_done + /project/Items.filter(|x| x/milestones.filter(|t| t == ../tag).count() > 0).sum(|x| x/points))
         }
 
+        <Label> Status {
+            string icon (hidden=true) = ""
+        }
+
         list Stages (entry=<Label>, key="tag") {
             - {
                 - tag = "filed"
@@ -167,16 +171,18 @@ tab project (label=$(name), mutable=true) {
             }
         }
 
-        list Statuses (entry=<Label>, key="tag") {
+        list Statuses (entry=<Status>, key="tag") {
             - {
                 - tag = "finished"
                 - name = "finished"
                 - colour = "#15803d"
+                - icon = "check"
             }
             - {
                 - tag = "cancelled"
                 - name = "cancelled"
                 - colour = "#9f1239"
+                - icon = "cross"
             }
         }
 
@@ -594,6 +600,9 @@ tab project (label=$(name), mutable=true) {
             context hover-text = true
 
             timestamp added (hidden=true) = "2026-01-01T00:00:00Z"
+            enum status (label="", vocabulary="/project/Statuses", chip="icon", font-size=11px, width=32px, alignment="center",
+                         hover-text=$("This item was " + ../status)) = "finished"
+            mark (type="separator")
             string handle (label="id", font-size=11px, width=14%) = ""
             mark (type="separator")
             enum owner (label="by", vocabulary="/project/people/People", chip="icon", placeholder="", clearable=true, font-size=11px, width=32px,
@@ -604,11 +613,8 @@ tab project (label=$(name), mutable=true) {
                            alignment="center",
                            hover-text=$(../assignee == "" ? "Nobody was to work this item" : "This item was for <@" + ../assignee + ">")) = ""
             mark (type="separator")
-            string title (label="title", font-size=14px, width=35%,
+            string title (label="title", font-size=14px, width=42%,
                           hover-text="Item title or short description") = ""
-            mark (type="separator")
-            enum status (label="status", vocabulary="/project/Statuses", width=7%, alignment="center",
-                         hover-text=$("This item was " + ../status)) = "finished"
             string parent (hidden=true) = ""
             tags after (hidden=true) = ""
             mark (type="separator")
