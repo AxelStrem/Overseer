@@ -8041,8 +8041,13 @@ export class OverseerRenderer {
                 const segments = path.split('/').filter(Boolean)
                 const list = this.findNodeByPath(this.app.currentDocument, segments)
                 const key = String((list && this.getParameterValue(list, 'key')) || 'tag')
+                const records = this.unreadVocabularyOf(list)
+                const recorded = new Map(records.map((r) => [String(r.key), r]))
                 for (const entry of (list && list.children) || []) {
-                    const field = (name) => this.entryValue(entry, name)
+                    // An entry the window leaves out holds only what it writes: what its template
+                    // gives its chip, the server says beside the parts not read.
+                    const record = recorded.get(String(this.entryValue(entry, key) ?? ''))
+                    const field = (name) => this.entryValue(entry, name) ?? record?.[name] ?? null
                     const tag = field(key)
                     if (tag === null || tag === undefined || tag === '' || found.has(String(tag))) continue
                     const name = field('name')
@@ -8065,7 +8070,7 @@ export class OverseerRenderer {
                 // A list with parts not read holds only its newest entries; the server says what
                 // the rest give a chip. They are not in the page: a press on their chip reads the
                 // list back as far as the entry first - see `readBackTo`.
-                for (const record of this.unreadVocabularyOf(list)) {
+                for (const record of records) {
                     const tag = record.key
                     if (!tag || found.has(String(tag))) continue
                     const name = record.name

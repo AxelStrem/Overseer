@@ -6837,6 +6837,56 @@ impl FormulaEvaluator {
         })
     }
 
+    /// What a vocabulary takes of an entry the window leaves out, which holds only what it writes
+    /// and is not worked out: those of `VOCABULARY_FIELDS` that `template` holds, as text - each
+    /// as the entry writes it or the template has it, or worked out from those by the reading a
+    /// part not read gets (see `vocabulary_reading`) - so its chip draws as it would with the
+    /// entry in view. A field that cannot be had that way is left out, and an entry without a key
+    /// is `None`.
+    pub fn chip_fields_of(
+        entry: &OverseerNode,
+        template: &OverseerNode,
+        list: &str,
+        key: &str,
+        context: &EvaluationContext,
+    ) -> Option<(String, Vec<(String, String)>)> {
+        let written = |name: &str| -> OverseerValue {
+            [entry, template]
+                .into_iter()
+                .filter_map(|from| Self::accessible_child(from, name)?.parameters.get("value").cloned())
+                .find(|value| !matches!(value, OverseerValue::Formula(_)))
+                .unwrap_or(OverseerValue::Null)
+        };
+        let text = |value: &OverseerValue| match value {
+            OverseerValue::Null => None,
+            value => Some(Self::value_to_string(value)).filter(|s| !s.is_empty() && s != "null"),
+        };
+        let keyed = text(&written(key))?;
+        let mut said = Vec::new();
+        for field in Self::VOCABULARY_FIELDS {
+            if field == key {
+                continue;
+            }
+            let value = match Self::vocabulary_reading(template, list, field) {
+                Some(Some(VocabularyReading::Written)) => written(field),
+                Some(Some(VocabularyReading::Worked { lambda, beside })) => {
+                    let mut held = OverseerNode::new(ENTRY.to_string());
+                    for name in &beside {
+                        let mut copy = OverseerNode::new(name.clone());
+                        copy.parameters.insert("value".to_string(), written(name));
+                        held.children.push(copy);
+                    }
+                    Self::eval_lambda(&lambda, None, Some(&held), None, context).unwrap_or(OverseerValue::Null)
+                }
+                _ => continue,
+            };
+            if let Some(value) = text(&value) {
+                said.push((field.to_string(), value));
+            }
+        }
+        Some((keyed, said))
+    }
+
     /// What a vocabulary takes of each entry in a list's parts not read: its key, and those of
     /// `VOCABULARY_FIELDS` its template holds, as text - see `vocabulary_reading`. A field is read
     /// by one chain of its own, so each is summarised and kept on its own; none of them filters,

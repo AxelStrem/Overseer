@@ -1652,6 +1652,10 @@ pub const UNREAD_VOCABULARY: &str = "_parts_vocabulary";
 ///
 /// A vocabulary names its lists as paths, by the last step of each: a false likeness costs only
 /// the summaries of a list nobody draws chips from.
+///
+/// The entries such a list holds but its window leaves out hold only what they write, and their
+/// chips would draw without the colour, icon or shape the template gives - grey, until a wider
+/// window worked them out. Their records are given beside those of the parts not read.
 fn name_unread_entries(nodes: &mut Vec<OverseerNode>) {
     fn said(nodes: &[OverseerNode], names: &mut std::collections::HashSet<String>) {
         for node in nodes {
@@ -1705,7 +1709,14 @@ fn name_unread_entries(nodes: &mut Vec<OverseerNode>) {
             var_bindings: std::collections::HashMap::new(),
         };
         match crate::formula_evaluator::FormulaEvaluator::unread_vocabulary(list, key, &context) {
-            Ok(records) => {
+            Ok(mut records) => {
+                // The entries it holds out of view, newer than any part not read, go first.
+                if let Some((_, template)) = crate::partsums::template_of(list) {
+                    let left_out = list.children.iter().filter(|entry| out_of_view(entry)).filter_map(|entry| {
+                        crate::formula_evaluator::FormulaEvaluator::chip_fields_of(entry, &template, &list.name, key, &context)
+                    });
+                    records.splice(0..0, left_out.collect::<Vec<_>>());
+                }
                 let records: Vec<serde_json::Value> = records
                     .into_iter()
                     .map(|(key, fields)| {

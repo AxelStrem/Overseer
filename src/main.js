@@ -2175,13 +2175,6 @@ tab Main {
             .map((node) => node.name)
     }
 
-    /// Start the document's clock: one for each top-level node with an `on tick`, beating as often
-    /// as its `tick=` says - for as long as the document is open here, and only then.
-    ///
-    /// The clock is the page's, not the document's: a tick may set only what is this viewer's, so
-    /// each page that has the document open steps its own state and the file is never written.
-    /// Ticks never overlap - the next is counted from when the last was answered - and a beat that
-    /// finds the page hidden, or part-way through a change, is let go.
     /// Show the node at an address, as a press on a chip standing for it would - opening its folds
     /// and tabs, scrolling to it and marking it for a moment - or say in the status line why not.
     revealAddress(address) {
@@ -2191,6 +2184,13 @@ tab Main {
         if (why) this.setStatus('Not shown', `${address}: ${why}`, 'warning')
     }
 
+    /// Start the document's clock: one for each top-level node with an `on tick`, beating as often
+    /// as its `tick=` says - for as long as the document is open here, and only then.
+    ///
+    /// The clock is the page's, not the document's: a tick may set only what is this viewer's, so
+    /// each page that has the document open steps its own state and the file is never written.
+    /// Ticks never overlap - the next is counted from when the last was answered - and a beat that
+    /// finds the page hidden, or part-way through a change, is let go.
     startTheClock() {
         this.stopTheClock()
         const owners = this.ticking(this.currentDocument)
