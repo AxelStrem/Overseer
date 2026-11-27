@@ -152,7 +152,7 @@
                     - {
                         - at = "2026-09-03T09:00:00+04:00"
                         - author = "owner"
-                        - body = "Only worth it once <#UNDO-TREE> is in."
+                        - body = "Only worth it once <$UNDO-TREE> is in."
                     }
                 }
             }
