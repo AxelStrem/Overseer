@@ -275,11 +275,11 @@ fn the_templates_version_changes_with_its_file() {
 
     let file = template_in("version");
     let text = std::fs::read_to_string(&file).unwrap();
-    std::fs::write(&file, text.replace("template_version (hidden=true) = 2", "template_version (hidden=true) = 3")).unwrap();
+    std::fs::write(&file, text.replace("template_version (hidden=true) = 3", "template_version (hidden=true) = 4")).unwrap();
     let after = ask(port, "GET", &path, &[key], None);
     assert_eq!(after.status, 200, "{}", after.body);
     assert_ne!(after.json()["version"].as_str().unwrap(), version);
-    assert!(after.json()["text"].as_str().unwrap().contains("template_version (hidden=true) = 3"));
+    assert!(after.json()["text"].as_str().unwrap().contains("template_version (hidden=true) = 4"));
 }
 
 #[test]
