@@ -120,3 +120,41 @@ fn one_undo_takes_all_of_it_back() {
         assert_eq!(on_disk(&root), DOCUMENT);
     });
 }
+
+#[test]
+fn several_cards_are_placed_in_one_change() {
+    serialised(|| {
+        let root = a_root("several");
+        let service = DocumentRoot::new(&root).expect("open the root");
+        let nodes = service.open("d.os").expect("open");
+        let path = |entry: &str| overseer::addressing::name_path(&nodes, &format!("board/Notes/[{}]", entry))
+            .unwrap_or_else(|| panic!("no entry {}", entry));
+        service
+            .command_for(
+                "alice",
+                Some("d.os"),
+                "set_overseer_entry_fields",
+                &json!({
+                    "entries": [
+                        { "entry_path": path("placed"), "settings": [
+                            { "node_path": ["x"], "value": { "Float": 200.0 } },
+                            { "node_path": ["y"], "value": { "Float": 60.0 } },
+                        ] },
+                        { "entry_path": path("loose"), "settings": [
+                            { "node_path": ["x"], "value": { "Float": 80.0 } },
+                            { "node_path": ["y"], "value": { "Float": 20.0 } },
+                        ] },
+                    ],
+                }),
+            )
+            .expect("the placing was refused");
+        let text = on_disk(&root);
+        let loose = &text[text.find(r#"- title = "loose""#).expect("the entry")..];
+        assert!(text.contains("- x = 200") && text.contains("- y = 60"), "{}", text);
+        assert!(loose.contains("- x = 80") && loose.contains("- y = 20"), "{}", text);
+        assert!(text.contains("int moves = 4"), "{}", text);
+        assert_eq!(overseer::undo::depth(&root, "d.os"), 1, "not one step");
+        service.undo("d.os").expect("undo");
+        assert_eq!(on_disk(&root), DOCUMENT);
+    });
+}

@@ -407,18 +407,24 @@ async fn copy_overseer_entry(
     })
 }
 
-/// Write several fields of one entry as one change, their handlers run - a card dragged on a canvas.
+/// Write several fields of one entry, or of several, as one change, their handlers run - cards
+/// dragged on a canvas.
 #[command]
 async fn set_overseer_entry_fields(
     request: tauri::ipc::Request<'_>,
     path: String,
-    entry_path: Vec<String>,
-    settings: Vec<app_api::ValueWrite>,
+    entry_path: Option<Vec<String>>,
+    settings: Option<Vec<app_api::ValueWrite>>,
+    entries: Option<Vec<app_api::EntryWrite>>,
     shown_version: Option<String>,
 ) -> Result<ForThePage<app_api::ResolvedUpdate>> {
     beside(&request, || {
         let _showing = app_api::describing_for(shown_version);
-        app_api::set_in_entry_at(&path, &path, entry_path, settings, THE_WINDOW)
+        let entries = entries.unwrap_or_else(|| vec![app_api::EntryWrite {
+            entry_path: entry_path.unwrap_or_default(),
+            settings: settings.unwrap_or_default(),
+        }]);
+        app_api::set_in_entries_at(&path, &path, entries, THE_WINDOW)
             .map(app_api::for_the_page).map(ForThePage)
     })
 }

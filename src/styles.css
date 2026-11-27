@@ -1012,6 +1012,26 @@ body:not(.drawer-folded) #main-bar:not(:has(.tab-button + .tab-button)) {
     fill-opacity: 0.55;
 }
 
+/* Cards picked to be moved together, and the band drawn on the bare canvas to pick them. */
+.canvas-area > [data-uid].canvas-picked {
+    outline: 2px solid var(--ov-accent);
+    outline-offset: 2px;
+}
+
+.canvas-area > .canvas-band {
+    position: absolute;
+    z-index: 4;
+    border: 1px solid var(--ov-accent);
+    background: color-mix(in srgb, var(--ov-accent) 12%, transparent);
+    pointer-events: none;
+}
+
+.canvas-banding,
+.canvas-banding * {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
 .canvas-scroll.drop-here {
     outline: 2px dashed var(--ov-accent);
     outline-offset: 1px;

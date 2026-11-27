@@ -1008,15 +1008,20 @@ impl DocumentRoot {
                 let named = document
                     .ok_or_else(|| RequestError::Rejected("'document' is required".into()))?;
                 let at = self.resolve(named)?;
-                let entry = arg_strings(args, &["entry_path", "entryPath"]);
-                // The fields to write, named from the entry - see `app_api::set_in_entry_at`.
-                let settings: Vec<app_api::ValueWrite> = from_value(args, "settings")?;
+                // Several entries as one change, or one entry's fields - see
+                // `app_api::set_in_entries_at`. The fields are named from their entry.
+                let entries: Vec<app_api::EntryWrite> = match args.get("entries") {
+                    Some(v) if !v.is_null() => from_value(args, "entries")?,
+                    _ => vec![app_api::EntryWrite {
+                        entry_path: arg_strings(args, &["entry_path", "entryPath"]),
+                        settings: from_value(args, "settings")?,
+                    }],
+                };
                 as_json(
-                    app_api::for_the_page(app_api::set_in_entry_at(
+                    app_api::for_the_page(app_api::set_in_entries_at(
                         at.to_string_lossy().as_ref(),
                         named,
-                        entry,
-                        settings,
+                        entries,
                         session,
                     )
                     .map_err(|e| RequestError::from_event("could not write", e))?),

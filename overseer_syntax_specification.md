@@ -628,6 +628,11 @@ list Notes (entry=<Card>, view="canvas", x="x", y="y") { }
 Dragging a card to another spot writes both fields as one change: each field's `on change` runs
 in it, one undo takes all of it back, and `mutable` is respected as for a board. Nothing moves in
 the list itself, so a filter, `narrows`, `sort_by` and `window` work on a canvas as on any list.
+Several cards are moved together by picking them first - a click with Ctrl, Cmd or Shift held
+picks a card or lets go of it, and a band dragged with the mouse on the bare area picks every card
+it touches; Escape or a click on the bare area lets go of them all. Dragging one of the picked
+cards carries the others by as much, and letting go writes every one of them as one change, one
+undo taking it all back. A finger moves one card at a time.
 
 An entry stands where its two fields say, the template's values included: a new entry is placed
 at the template's values, and several may stand piled there until they are dragged apart. The

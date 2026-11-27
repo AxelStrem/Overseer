@@ -2456,10 +2456,32 @@ pub fn set_in_entry_at(
     settings: Vec<ValueWrite>,
     session: &str,
 ) -> Result<ResolvedUpdate> {
+    set_in_entries_at(path, document, vec![EntryWrite { entry_path, settings }], session)
+}
+
+/// The fields of one entry to write, named from it - see `set_in_entries_at`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EntryWrite {
+    #[serde(alias = "entryPath")]
+    pub entry_path: Vec<String>,
+    pub settings: Vec<ValueWrite>,
+}
+
+/// `set_in_entry_at` for several entries in one change - cards dragged together on a canvas.
+/// The entries are written in the order given, each found again by its path, so one undo step
+/// takes back every card that moved.
+pub fn set_in_entries_at(
+    path: &str,
+    document: &str,
+    entries: Vec<EntryWrite>,
+    session: &str,
+) -> Result<ResolvedUpdate> {
     change_document(path, document, session, move |nodes| {
-        let entry = format!("/{}", entry_path.join("/"));
-        for set in settings {
-            crate::actions::ActionExecutor::set_in_entry_at(nodes, &entry, &set.node_path, set.value)?;
+        for EntryWrite { entry_path, settings } in entries {
+            let entry = format!("/{}", entry_path.join("/"));
+            for set in settings {
+                crate::actions::ActionExecutor::set_in_entry_at(nodes, &entry, &set.node_path, set.value)?;
+            }
         }
         Ok(())
     })

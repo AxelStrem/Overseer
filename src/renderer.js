@@ -5175,6 +5175,9 @@ export class OverseerRenderer {
                 for (const other of area.querySelectorAll(':scope > .canvas-front')) other.classList.remove('canvas-front')
                 el.classList.add('canvas-front')
             }, { capture: true })
+            // Cards are picked to be moved together - see `pickCanvasCard` and `armCanvasBand`.
+            area.addEventListener('click', (event) => this.pickCanvasCard(event, element, area), { capture: true })
+            scroll.addEventListener('pointerdown', (event) => this.armCanvasBand(event, element, area))
         }
         const area = frame.querySelector(':scope > .canvas-scroll > .canvas-area')
 
@@ -5195,6 +5198,7 @@ export class OverseerRenderer {
             area.appendChild(el)
             placed.push({ el, at })
         }
+        this.markPickedCards(element)
         this.sizeCanvas(area, placed)
         this.drawCanvasLines(element, node)
         // Drawn before it is on the page, a card has no size yet to grow the area by, nor an
@@ -5416,9 +5420,184 @@ export class OverseerRenderer {
         }
     }
 
+    /// The cards picked on a canvas to be moved together, by their entries' addresses - kept by
+    /// the list's address, as its scroll is, so a card drawn again is still picked.
+    pickedCards(element) {
+        return (this._canvasPicked && this._canvasPicked.get(element.dataset.path || '')) || new Set()
+    }
+
+    setPickedCards(element, paths) {
+        if (!this._canvasPicked) this._canvasPicked = new Map()
+        const key = element.dataset.path || ''
+        if (paths.size) this._canvasPicked.set(key, paths)
+        else this._canvasPicked.delete(key)
+        this.markPickedCards(element)
+        if (!this._canvasPickEscape && typeof window !== 'undefined') {
+            this._canvasPickEscape = true
+            window.addEventListener('keydown', (event) => {
+                if (event.key !== 'Escape' || this._entryDrag || !this._canvasPicked?.size) return
+                this._canvasPicked.clear()
+                for (const canvas of this.scopedAll('.overseer-list.view-canvas')) this.markPickedCards(canvas)
+            })
+        }
+    }
+
+    markPickedCards(element) {
+        const area = element.querySelector(':scope > .overseer-canvas > .canvas-scroll > .canvas-area')
+        if (!area) return
+        const picked = this.pickedCards(element)
+        for (const el of area.querySelectorAll(':scope > [data-uid]')) {
+            el.classList.toggle('canvas-picked', picked.has(el.dataset.path || ''))
+        }
+    }
+
+    /// The cards of a canvas that are picked and drawn, a filter having hidden none of them.
+    pickedCardElements(element, area) {
+        const picked = this.pickedCards(element)
+        return Array.from(area.querySelectorAll(':scope > [data-uid]')).filter((el) => picked.has(el.dataset.path || '')
+            && !el.hidden && !el.classList.contains('filtered-out'))
+    }
+
+    /// Ctrl or Cmd, or Shift, held as a card is clicked: the card is picked, or let go of, to be
+    /// moved with the others, and the click does nothing else - not a press, not an edit.
+    pickCanvasCard(event, element, area) {
+        if (element.dataset.canvasDrag !== '1' || this._dragJustEnded) return
+        if (!(event.ctrlKey || event.metaKey || event.shiftKey)) return
+        let el = event.target instanceof Element ? event.target : null
+        if (el && el.closest('textarea, input, select, [contenteditable="true"]')) return
+        while (el && el.parentElement !== area) el = el.parentElement
+        if (!el || !el.hasAttribute('data-uid') || !el.dataset.path) return
+        event.preventDefault()
+        event.stopPropagation()
+        const picked = new Set(this.pickedCards(element))
+        if (picked.has(el.dataset.path)) picked.delete(el.dataset.path)
+        else picked.add(el.dataset.path)
+        this.setPickedCards(element, picked)
+    }
+
+    /**
+     * A mouse pressed on a canvas where no card stands: dragged, it draws a band that picks every
+     * card it touches, added to those picked already when Ctrl, Cmd or Shift is held; let go
+     * without moving, it lets go of them all. A finger there scrolls the canvas, as it always has.
+     */
+    armCanvasBand(event, element, area) {
+        if (element.dataset.canvasDrag !== '1' || this._entryDrag) return
+        if (event.pointerType !== 'mouse' || event.button !== 0) return
+        const scroll = area.parentElement
+        const target = event.target
+        if (target !== scroll && target !== area && !(target instanceof Element && target.closest('svg.canvas-lines') && !target.closest('.canvas-line'))) return
+        event.preventDefault()
+        const adding = event.ctrlKey || event.metaKey || event.shiftKey
+        const before = adding ? new Set(this.pickedCards(element)) : new Set()
+        const start = { x: event.clientX, y: event.clientY }
+        let band = null
+        const box = (e) => ({
+            left: Math.min(start.x, e.clientX), top: Math.min(start.y, e.clientY),
+            right: Math.max(start.x, e.clientX), bottom: Math.max(start.y, e.clientY),
+        })
+        const touched = (b) => {
+            const picked = new Set(before)
+            for (const el of area.querySelectorAll(':scope > [data-uid]')) {
+                if (el.hidden || el.classList.contains('filtered-out') || !el.dataset.path) continue
+                const r = el.getBoundingClientRect()
+                if (r.left <= b.right && r.right >= b.left && r.top <= b.bottom && r.bottom >= b.top) picked.add(el.dataset.path)
+            }
+            return picked
+        }
+        const onMove = (e) => {
+            if (e.pointerId !== event.pointerId) return
+            if (!band) {
+                if (Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 4) return
+                band = document.createElement('div')
+                band.className = 'canvas-band'
+                area.appendChild(band)
+                document.body.classList.add('canvas-banding')
+            }
+            const b = box(e)
+            const r = area.getBoundingClientRect()
+            band.style.left = `${b.left - r.left}px`
+            band.style.top = `${b.top - r.top}px`
+            band.style.width = `${b.right - b.left}px`
+            band.style.height = `${b.bottom - b.top}px`
+            this.setPickedCards(element, touched(b))
+        }
+        const off = () => {
+            window.removeEventListener('pointermove', onMove)
+            window.removeEventListener('pointerup', onUp)
+            window.removeEventListener('pointercancel', onCancel)
+            band?.remove()
+            document.body.classList.remove('canvas-banding')
+        }
+        const onUp = (e) => {
+            if (e.pointerId !== event.pointerId) return
+            if (band) this.setPickedCards(element, touched(box(e)))
+            else if (!adding) this.setPickedCards(element, new Set())
+            off()
+        }
+        const onCancel = (e) => {
+            if (e.pointerId !== event.pointerId) return
+            this.setPickedCards(element, before)
+            off()
+        }
+        window.addEventListener('pointermove', onMove)
+        window.addEventListener('pointerup', onUp)
+        window.addEventListener('pointercancel', onCancel)
+    }
+
+    /// A card lifted on its canvas: when it is one of several picked, the others go with it;
+    /// when it is not picked, it goes alone and the others are let go of.
+    liftPickedCards(drag) {
+        const list = drag.list
+        const area = list.querySelector(':scope > .overseer-canvas > .canvas-scroll > .canvas-area')
+        const at = (el) => ({ el, left: parseFloat(el.style.left), top: parseFloat(el.style.top) })
+        drag.from = area && drag.entry.parentElement === area ? at(drag.entry) : null
+        drag.along = []
+        if (!area || !drag.from || !Number.isFinite(drag.from.left) || !Number.isFinite(drag.from.top)) return
+        const picked = this.pickedCards(list)
+        if (!picked.has(drag.entry.dataset.path || '')) {
+            if (picked.size) this.setPickedCards(list, new Set())
+            return
+        }
+        drag.along = this.pickedCardElements(list, area)
+            .filter((el) => el !== drag.entry)
+            .map(at)
+            .filter((c) => Number.isFinite(c.left) && Number.isFinite(c.top))
+    }
+
+    /// How far the cards carried on a canvas have come, in the area's pixels: no card of them is
+    /// taken past the area's top or left edge, so the group keeps its shape.
+    canvasDragOffset(drag, area) {
+        const r = area.getBoundingClientRect()
+        let dx = Math.round(drag.x - drag.offsetX - r.left) - drag.from.left
+        let dy = Math.round(drag.y - drag.offsetY - r.top) - drag.from.top
+        for (const c of [drag.from, ...drag.along]) {
+            dx = Math.max(dx, -c.left)
+            dy = Math.max(dy, -c.top)
+        }
+        return { dx, dy }
+    }
+
+    /// The cards that went with a lifted one put back where they stood: the drag came to nothing.
+    putBackPickedCards(drag) {
+        for (const c of drag.along || []) {
+            c.el.style.left = `${c.left}px`
+            c.el.style.top = `${c.top}px`
+        }
+    }
+
     /// A card carried over its canvas: near an edge of what is shown, the area scrolls on.
     followCanvasDrag(drag) {
         drag.line.hidden = true
+        if (drag.along?.length) {
+            const area = drag.target.querySelector(':scope > .canvas-area')
+            if (area) {
+                const { dx, dy } = this.canvasDragOffset(drag, area)
+                for (const c of drag.along) {
+                    c.el.style.left = `${c.left + dx}px`
+                    c.el.style.top = `${c.top + dy}px`
+                }
+            }
+        }
         const scroll = drag.target
         const r = scroll.getBoundingClientRect()
         const edge = 32
@@ -5430,39 +5609,63 @@ export class OverseerRenderer {
 
     /**
      * A card let go over its canvas: its entry takes the place it was let go at, both fields in
-     * one change, with each field's `on change` run in it - see `app_api::set_in_entry_at`.
+     * one change, with each field's `on change` run in it - see `app_api::set_in_entries_at`.
+     * The picked cards carried with it move by as much, all of them in that one change.
      */
     dropOnCanvas(drag) {
         const list = drag.list
         const area = drag.target.querySelector(':scope > .canvas-area')
-        const entryNode = this.nodeDrawnBy(drag.entry)
-        if (!area || !entryNode) return
+        if (!area) return
         const r = area.getBoundingClientRect()
-        const x = Math.max(0, Math.round(drag.x - drag.offsetX - r.left))
-        const y = Math.max(0, Math.round(drag.y - drag.offsetY - r.top))
-        const entryPath = JSON.parse(drag.entry.dataset.path)
+        const moved = []
+        if (drag.from && Number.isFinite(drag.from.left) && Number.isFinite(drag.from.top)) {
+            const { dx, dy } = this.canvasDragOffset(drag, area)
+            for (const c of [drag.from, ...drag.along]) moved.push({ el: c.el, x: c.left + dx, y: c.top + dy })
+        } else {
+            moved.push({
+                el: drag.entry,
+                x: Math.max(0, Math.round(drag.x - drag.offsetX - r.left)),
+                y: Math.max(0, Math.round(drag.y - drag.offsetY - r.top)),
+            })
+        }
+        const entries = []
+        for (const m of moved) {
+            const written = this.canvasPlacing(list, m.el, m.x, m.y)
+            if (!written) { this.putBackPickedCards(drag); return }
+            entries.push(written)
+        }
+        // Shown where they were let go at once; the answer draws them where the file then says.
+        for (const m of moved) {
+            m.el.style.left = `${m.x}px`
+            m.el.style.top = `${m.y}px`
+            if (m.el.parentElement !== area) area.appendChild(m.el)
+        }
+        if (list.dataset.canvasLines) this.drawCanvasLines(list, this.canvasNodeOf(list))
+        const args = entries.length === 1
+            ? { entry_path: entries[0].entry_path, entryPath: entries[0].entry_path, settings: entries[0].settings }
+            : { entries }
+        this.writeByInstruction(drag.entry, 'set_overseer_entry_fields', args)
+            .catch((err) => console.warn('The placing failed:', err))
+    }
+
+    /// What placing a card at `x`, `y` writes: its entry's address, and its two fields named from
+    /// it, as a board's drop names its field. Null when the entry has not both fields.
+    canvasPlacing(list, el, x, y) {
+        const entryNode = this.nodeDrawnBy(el)
+        if (!entryNode || !el.dataset.path) return null
+        const entryPath = JSON.parse(el.dataset.path)
         const settings = []
         for (const [name, value] of [[list.dataset.canvasX, x], [list.dataset.canvasY, y]]) {
             const field = this.entryField(entryNode, name)
-            if (!field) return
+            if (!field) return null
             const fieldPath = this.fieldPathIn(entryNode, entryPath, field)
-            // Named from the entry, as a board's drop names its field.
             const named = fieldPath && fieldPath.slice(0, entryPath.length).every((s, i) => s === entryPath[i])
                 ? fieldPath.slice(entryPath.length)
                 : [name]
             const type = String(field.node_type || field.type || '').toLowerCase()
             settings.push({ node_path: named, value: type === 'int' ? { Integer: value } : { Float: value } })
         }
-        // Shown where it was let go at once; the answer draws it where the file then says.
-        drag.entry.style.left = `${x}px`
-        drag.entry.style.top = `${y}px`
-        if (drag.entry.parentElement !== area) area.appendChild(drag.entry)
-        if (list.dataset.canvasLines) this.drawCanvasLines(list, this.canvasNodeOf(list))
-        this.writeByInstruction(drag.entry, 'set_overseer_entry_fields', {
-            entry_path: entryPath,
-            entryPath,
-            settings,
-        }).catch((err) => console.warn('The placing failed:', err))
+        return { entry_path: entryPath, settings }
     }
 
     /**
@@ -6598,6 +6801,7 @@ export class OverseerRenderer {
         document.body.classList.add('overseer-dragging')
         try { window.getSelection()?.removeAllRanges() } catch (_) { /* nothing selected */ }
         for (const target of targets) target.classList.add('accepts-drop')
+        if (drag.list.dataset.canvasDrag) this.liftPickedCards(drag)
         this.followEntryDrag()
     }
 
@@ -6930,6 +7134,7 @@ export class OverseerRenderer {
         }
         this._dragJustEnded = true
         setTimeout(() => { this._dragJustEnded = false }, 0)
+        if (!dropped || !drag.target || !drag.target.classList.contains('canvas-scroll')) this.putBackPickedCards(drag)
         if (!dropped || !drag.target) return
         if (drag.tree) {
             if (drag.target === drag.list && drag.treeDrop) this.dropInTree(drag)
