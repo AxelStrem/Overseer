@@ -871,7 +871,7 @@ tab project (label=$(name), mutable=true) {
         div NewTask (layout="horizontal", margin=0, spacing=6, alignment="center", border-style=none) {
             textbox handle (label="", placeholder="id", width=10%) = $(fresh_key(/project/Items, /project/History, /project/Discussion))
             textbox title (label="", placeholder="what needs doing", width=18%) = ""
-            textbox parent (label="", placeholder="under", width=10%) = ""
+            textbox parent (label="", placeholder="under", vocabulary="/project/Items", limit=1, width=10%) = ""
             textbox after (label="", placeholder="after", vocabulary="/project/Items, /project/History",
                            width=10%) = ""
             textbox labels (label="", placeholder="tags", vocabulary="/project/Labels", width=10%) = ""
